@@ -1,15 +1,15 @@
 package com.lordofthejars.nosqlunit.redis.embedded;
 
 import static ch.lambdaj.collection.LambdaCollections.with;
-
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
 import java.util.Set;
-
 import redis.clients.jedis.BinaryClient;
 import redis.clients.jedis.BinaryClient.LIST_POSITION;
 import redis.clients.jedis.BinaryJedisCommands;
@@ -19,13 +19,13 @@ import redis.clients.jedis.JedisMonitor;
 import redis.clients.jedis.JedisPubSub;
 import redis.clients.jedis.Pipeline;
 import redis.clients.jedis.PipelineBlock;
+import redis.clients.jedis.ScanResult;
 import redis.clients.jedis.SortingParams;
 import redis.clients.jedis.Transaction;
 import redis.clients.jedis.TransactionBlock;
 import redis.clients.jedis.Tuple;
 import redis.clients.util.Slowlog;
 import ch.lambdaj.function.convert.Converter;
-
 import com.lordofthejars.nosqlunit.redis.embedded.ListDatatypeOperations.ListPositionEnum;
 import com.lordofthejars.nosqlunit.redis.embedded.SortsetDatatypeOperations.ScoredByteBuffer;
 
@@ -62,11 +62,236 @@ public class EmbeddedJedis implements JedisCommands, BinaryJedisCommands {
 	}
 
 	@Override
-	public String set(byte[] key, byte[] value) {
-		keysServerOperations.del(key);
-		stringDatatypeOperations.removeExpiration(key);
-		return stringDatatypeOperations.set(key, value);
+	public Long append(byte[] key, byte[] value) {
+		updateTtl(key);
+		checkValidTypeOrNone(key, StringDatatypeOperations.STRING);
+		return this.stringDatatypeOperations.append(key, value);
 	}
+
+	@Override
+	public Long append(String key, String value) {
+		return this.append(toByteArray().convert(key), toByteArray().convert(value));
+	}
+
+	public String auth(final String password) {
+		return this.connectionServerOperations.auth(password);
+	}
+
+	public String bgrewriteaof() {
+		return this.keysServerOperations.bgrewriteaof();
+	}
+
+	public String bgsave() {
+		return this.keysServerOperations.bgsave();
+	}
+
+	@Override
+    public Long bitcount(byte[] key) {
+        return this.stringDatatypeOperations.bitcount(key);
+    }
+
+	@Override
+    public Long bitcount(byte[] key, long start, long end) {
+        return this.stringDatatypeOperations.bitcount(key, start, start);
+    }
+
+	@Override
+    public Long bitcount(String key) {
+       return this.bitcount(key.getBytes());
+    }
+
+	@Override
+    public Long bitcount(String key, long start, long end) {
+        return this.bitcount(key.getBytes(), start, end);
+    }
+
+	@Override
+    public List<byte[]> blpop(byte[] key) {
+        return this.listDatatypeOperations.blpop(0, key);
+    }
+
+	@Override
+    public List<String> blpop(String key) {
+        List<byte[]> result = this.blpop(key.getBytes());
+        return new LinkedList<String>(with(result).convert(toStringValue()));
+    }
+
+	@Override
+    public List<byte[]> brpop(byte[] key) {
+        return this.listDatatypeOperations.brpop(0, key);
+    }
+
+	@Override
+    public List<String> brpop(String key) {
+        List<byte[]> result = this.brpop(key.getBytes());
+        return new LinkedList<String>(with(result).convert(toStringValue()));
+    }
+
+	public List<byte[]> configGet(final byte[] pattern) {
+		return this.keysServerOperations.configGet(pattern);
+	}
+
+	public List<String> configGet(final String pattern) {
+		List<byte[]> result = this.configGet(toByteArray().convert(pattern));
+		return with(result).convert(toStringValue());
+	}
+
+	public String configResetStat() {
+		return this.keysServerOperations.configResetStat();
+	}
+
+	public byte[] configSet(final byte[] parameter, final byte[] value) {
+		return this.keysServerOperations.configSet(parameter, value);
+	}
+
+	public String configSet(final String parameter, final String value) {
+		byte[] result =  this.configSet(toByteArray().convert(parameter), toByteArray().convert(value));
+		return toStringValue().convert(result);
+	}
+
+	public Long dbSize() {
+		updateAllTtlTimes();
+		return this.keysServerOperations.dbSize();
+	}
+
+	@Override
+	public Long decr(byte[] key) {
+		updateTtl(key);
+		checkValidTypeOrNone(key, StringDatatypeOperations.STRING);
+		return this.stringDatatypeOperations.decr(key);
+	}
+
+	@Override
+	public Long decr(String key) {
+		return this.decr(toByteArray().convert(key));
+	}
+
+	@Override
+	public Long decrBy(byte[] key, long integer) {
+		updateTtl(key);
+		checkValidTypeOrNone(key, StringDatatypeOperations.STRING);
+		return this.stringDatatypeOperations.decrBy(key, integer);
+	}
+
+	@Override
+	public Long decrBy(String key, long integer) {
+		return this.decrBy(toByteArray().convert(key), integer);
+	}
+
+	public Long del(final byte[]... keys) {
+		return this.keysServerOperations.del(keys);
+	}
+
+	@Override
+    public Long del(byte[] key) {
+        return this.keysServerOperations.del(key);
+    }
+
+	public Long del(final String... keys) {
+		byte[][] arrayOfFields = with(keys).convert(toByteArray()).toArray(new byte[keys.length][]);
+		return this.del(arrayOfFields);
+	}
+
+	@Override
+    public Long del(String key) {
+        return this.del(key.getBytes());
+    }
+
+	public byte[] echo(final byte[] string) {
+		return this.connectionServerOperations.echo(string);
+	}
+
+	public String echo(final String string) {
+		byte[] result = this.echo(toByteArray().convert(string));
+		return toStringValue().convert(result);
+	}
+
+	public Object eval(byte[] script, byte[] keyCount, byte[][] params) {
+		return this.scriptingServerOperations.eval(script, keyCount, params);
+	}
+
+	/**
+	 * Evaluates scripts using the Lua interpreter built into Redis starting
+	 * from version 2.6.0.
+	 * <p>
+	 *
+	 * @return Script result
+	 */
+	public Object eval(byte[] script, List<byte[]> keys, List<byte[]> args) {
+		return this.scriptingServerOperations.eval(script, keys, args);
+	}
+
+	public Object eval(String script) {
+		return eval(script, 0);
+	}
+
+	public Object eval(String script, int keyCount, String... params) {
+		byte[][] arrayOfParams = with(params).convert(toByteArray()).toArray(new byte[params.length][]);
+		return this.eval(toByteArray().convert(script), toByteArray().convert(Integer.toString(keyCount)),
+				arrayOfParams);
+	}
+
+	public Object eval(String script, List<String> keys, List<String> args) {
+		return this.eval(toByteArray().convert(script), with(keys).convert(toByteArray()),
+				with(args).convert(toByteArray()));
+	}
+
+	public Object evalsha(byte[] sha1, byte[] keyCount, byte[]... params) {
+		return this.scriptingServerOperations.evalsha(sha1, keyCount, params);
+	}
+
+	public Object evalsha(String script) {
+		return evalsha(script, 0);
+	}
+
+	public Object evalsha(String sha1, int keyCount, String... params) {
+		return this.evalsha(toByteArray().convert(sha1), toByteArray().convert(Integer.toString(keyCount)),
+				with(params).convert(toByteArray()).toArray(new byte[params.length][]));
+	}
+
+	public Object evalsha(String sha1, List<String> keys, List<String> args) {
+		return evalsha(sha1, keys.size(), getParams(keys, args));
+	}
+
+	@Override
+	public Boolean exists(byte[] key) {
+		updateTtl(key);
+		return this.stringDatatypeOperations.exists(key);
+	}
+
+	@Override
+	public Boolean exists(String key) {
+		return this.exists(toByteArray().convert(key));
+	}
+
+	@Override
+	public Long expire(byte[] key, int seconds) {
+		return this.keysServerOperations.expire(key, seconds);
+	}
+
+	@Override
+	public Long expire(String key, int seconds) {
+		return this.expire(toByteArray().convert(key), seconds);
+	}
+
+	@Override
+	public Long expireAt(byte[] key, long unixTime) {
+		return this.keysServerOperations.expireAt(key, unixTime);
+	}
+
+	@Override
+	public Long expireAt(String key, long unixTime) {
+		return expireAt(toByteArray().convert(key), unixTime);
+	}
+
+	public String flushAll() {
+		return this.flushDB();
+	}
+
+	public String flushDB() {
+		return this.keysServerOperations.flushDB();
+	}
+
 
 	@Override
 	public byte[] get(byte[] key) {
@@ -77,30 +302,36 @@ public class EmbeddedJedis implements JedisCommands, BinaryJedisCommands {
 	}
 
 	@Override
-	public Boolean exists(byte[] key) {
+	public String get(String key) {
+		byte[] result = this.get(toByteArray().convert(key));
+		return toStringValue().convert(result);
+	}
+
+	public Boolean getbit(byte[] key, long offset) {
 		updateTtl(key);
-		return this.stringDatatypeOperations.exists(key);
+		checkValidTypeOrNone(key, StringDatatypeOperations.STRING);
+		return this.stringDatatypeOperations.getbit(key, offset);
 	}
 
 	@Override
-	public String type(byte[] key) {
+	public Boolean getbit(String key, long offset) {
+		return this.getbit(toByteArray().convert(key), offset);
+	}
+
+	public Long getDB() {
+		return this.keysServerOperations.getDB();
+	}
+
+	public byte[] getrange(byte[] key, long startOffset, long endOffset) {
 		updateTtl(key);
-		return this.keysServerOperations.type(key);
+		checkValidTypeOrNone(key, StringDatatypeOperations.STRING);
+		return this.stringDatatypeOperations.getrange(key, startOffset, endOffset);
 	}
 
 	@Override
-	public Long expire(byte[] key, int seconds) {
-		return this.keysServerOperations.expire(key, seconds);
-	}
-
-	@Override
-	public Long expireAt(byte[] key, long unixTime) {
-		return this.keysServerOperations.expireAt(key, unixTime);
-	}
-
-	@Override
-	public Long ttl(byte[] key) {
-		return this.keysServerOperations.ttl(key);
+	public String getrange(String key, long startOffset, long endOffset) {
+		byte[] result = this.getrange(toByteArray().convert(key), startOffset, endOffset);
+		return toStringValue().convert(result);
 	}
 
 	@Override
@@ -113,108 +344,9 @@ public class EmbeddedJedis implements JedisCommands, BinaryJedisCommands {
 	}
 
 	@Override
-	public Long setnx(byte[] key, byte[] value) {
-		updateTtl(key);
-		checkValidTypeOrNone(key, StringDatatypeOperations.STRING);
-		return this.stringDatatypeOperations.setnx(key, value);
-	}
-
-	@Override
-	public String setex(byte[] key, int seconds, byte[] value) {
-		updateTtl(key);
-		checkValidTypeOrNone(key, StringDatatypeOperations.STRING);
-		return this.stringDatatypeOperations.setex(key, seconds, value);
-	}
-
-	@Override
-	public Long decrBy(byte[] key, long integer) {
-		updateTtl(key);
-		checkValidTypeOrNone(key, StringDatatypeOperations.STRING);
-		return this.stringDatatypeOperations.decrBy(key, integer);
-	}
-
-	@Override
-	public Long decr(byte[] key) {
-		updateTtl(key);
-		checkValidTypeOrNone(key, StringDatatypeOperations.STRING);
-		return this.stringDatatypeOperations.decr(key);
-	}
-
-	@Override
-	public Long incrBy(byte[] key, long integer) {
-		updateTtl(key);
-		checkValidTypeOrNone(key, StringDatatypeOperations.STRING);
-		return this.stringDatatypeOperations.incrBy(key, integer);
-	}
-
-	@Override
-	public Long incr(byte[] key) {
-		updateTtl(key);
-		checkValidTypeOrNone(key, StringDatatypeOperations.STRING);
-		return this.stringDatatypeOperations.incr(key);
-	}
-
-	@Override
-	public Long append(byte[] key, byte[] value) {
-		updateTtl(key);
-		checkValidTypeOrNone(key, StringDatatypeOperations.STRING);
-		return this.stringDatatypeOperations.append(key, value);
-	}
-
-	@Override
-	public byte[] substr(byte[] key, int start, int end) {
-		updateTtl(key);
-		checkValidTypeOrNone(key, StringDatatypeOperations.STRING);
-		return this.stringDatatypeOperations.substr(key, start, end);
-	}
-
-	@Override
-	public Long hset(byte[] key, byte[] field, byte[] value) {
-		updateTtl(key);
-		checkValidTypeOrNone(key, HashDatatypeOperations.HASH);
-		return this.hashDatatypeOperations.hset(key, field, value);
-	}
-
-	@Override
-	public byte[] hget(byte[] key, byte[] field) {
-		updateTtl(key);
-		checkValidTypeOrNone(key, HashDatatypeOperations.HASH);
-		return this.hashDatatypeOperations.hget(key, field);
-	}
-
-	@Override
-	public Long hsetnx(byte[] key, byte[] field, byte[] value) {
-		updateTtl(key);
-		checkValidTypeOrNone(key, HashDatatypeOperations.HASH);
-		return this.hashDatatypeOperations.hsetnx(key, field, value);
-	}
-
-	@Override
-	public String hmset(byte[] key, Map<byte[], byte[]> hash) {
-		updateTtl(key);
-		checkValidTypeOrNone(key, HashDatatypeOperations.HASH);
-		return this.hashDatatypeOperations.hmset(key, hash);
-	}
-
-	@Override
-	public List<byte[]> hmget(byte[] key, byte[]... fields) {
-		updateTtl(key);
-		checkValidTypeOrNone(key, HashDatatypeOperations.HASH);
-		return this.hashDatatypeOperations.hmget(key, fields);
-	}
-
-	@Override
-	public Long hincrBy(byte[] key, byte[] field, long value) {
-		updateTtl(key);
-		checkValidTypeOrNone(key, HashDatatypeOperations.HASH);
-		return this.hashDatatypeOperations.hincrBy(key, field, value);
-	}
-
-	@Override
-	public Boolean hexists(byte[] key, byte[] field) {
-		updateTtl(key);
-		checkValidTypeOrNone(key, HashDatatypeOperations.HASH);
-		return this.hashDatatypeOperations.hexists(key, field);
+	public String getSet(String key, String value) {
+		byte[] result = this.getSet(toByteArray().convert(key), toByteArray().convert(value));
+		return toStringValue().convert(result);
 	}
 
 	@Override
@@ -225,24 +357,34 @@ public class EmbeddedJedis implements JedisCommands, BinaryJedisCommands {
 	}
 
 	@Override
-	public Long hlen(byte[] key) {
-		updateTtl(key);
-		checkValidTypeOrNone(key, HashDatatypeOperations.HASH);
-		return this.hashDatatypeOperations.hlen(key);
+	public Long hdel(String key, String... fields) {
+		byte[][] arrayOfFields = with(fields).convert(toByteArray()).toArray(new byte[fields.length][]);
+		return this.hdel(toByteArray().convert(key), arrayOfFields);
 	}
 
 	@Override
-	public Set<byte[]> hkeys(byte[] key) {
+	public Boolean hexists(byte[] key, byte[] field) {
 		updateTtl(key);
 		checkValidTypeOrNone(key, HashDatatypeOperations.HASH);
-		return this.hashDatatypeOperations.hkeys(key);
+		return this.hashDatatypeOperations.hexists(key, field);
 	}
 
 	@Override
-	public Collection<byte[]> hvals(byte[] key) {
+	public Boolean hexists(String key, String field) {
+		return hexists(toByteArray().convert(key), toByteArray().convert(field));
+	}
+
+	@Override
+	public byte[] hget(byte[] key, byte[] field) {
 		updateTtl(key);
 		checkValidTypeOrNone(key, HashDatatypeOperations.HASH);
-		return this.hashDatatypeOperations.hvals(key);
+		return this.hashDatatypeOperations.hget(key, field);
+	}
+
+	@Override
+	public String hget(String key, String field) {
+		byte[] result = this.hget(toByteArray().convert(key), toByteArray().convert(field));
+		return toStringValue().convert(result);
 	}
 
 	@Override
@@ -253,38 +395,169 @@ public class EmbeddedJedis implements JedisCommands, BinaryJedisCommands {
 	}
 
 	@Override
-	public Long rpush(byte[] key, byte[]... values) {
-		updateTtl(key);
-		checkValidTypeOrNone(key, ListDatatypeOperations.LIST);
-		return this.listDatatypeOperations.rpush(key, values);
+	public Map<String, String> hgetAll(String key) {
+		Map<byte[], byte[]> result = this.hgetAll(toByteArray().convert(key));
+		return toMapString().convert(result);
 	}
 
 	@Override
-	public Long lpush(byte[] key, byte[]... values) {
+	public Long hincrBy(byte[] key, byte[] field, long value) {
 		updateTtl(key);
-		checkValidTypeOrNone(key, ListDatatypeOperations.LIST);
-		return this.listDatatypeOperations.lpush(key, values);
+		checkValidTypeOrNone(key, HashDatatypeOperations.HASH);
+		return this.hashDatatypeOperations.hincrBy(key, field, value);
 	}
 
 	@Override
-	public Long llen(byte[] key) {
-		updateTtl(key);
-		checkValidTypeOrNone(key, ListDatatypeOperations.LIST);
-		return this.listDatatypeOperations.llen(key);
+	public Long hincrBy(String key, String field, long value) {
+		return this.hincrBy(toByteArray().convert(key), toByteArray().convert(field), value);
 	}
 
 	@Override
-	public List<byte[]> lrange(byte[] key, long start, long end) {
+	public Set<byte[]> hkeys(byte[] key) {
 		updateTtl(key);
-		checkValidTypeOrNone(key, ListDatatypeOperations.LIST);
-		return this.listDatatypeOperations.lrange(key, start, end);
+		checkValidTypeOrNone(key, HashDatatypeOperations.HASH);
+		return this.hashDatatypeOperations.hkeys(key);
 	}
 
 	@Override
-	public String ltrim(byte[] key, long start, long end) {
+	public Set<String> hkeys(String key) {
+		Set<byte[]> result = this.hkeys(toByteArray().convert(key));
+		return new LinkedHashSet<String>(with(result).convert(toStringValue()));
+	}
+
+	@Override
+	public Long hlen(byte[] key) {
 		updateTtl(key);
-		checkValidTypeOrNone(key, ListDatatypeOperations.LIST);
-		return this.listDatatypeOperations.ltrim(key, start, end);
+		checkValidTypeOrNone(key, HashDatatypeOperations.HASH);
+		return this.hashDatatypeOperations.hlen(key);
+	}
+
+	@Override
+	public Long hlen(String key) {
+		return this.hlen(toByteArray().convert(key));
+	}
+
+	@Override
+	public List<byte[]> hmget(byte[] key, byte[]... fields) {
+		updateTtl(key);
+		checkValidTypeOrNone(key, HashDatatypeOperations.HASH);
+		return this.hashDatatypeOperations.hmget(key, fields);
+	}
+
+	@Override
+	public List<String> hmget(String key, String... fields) {
+		byte[][] arrayOfFields = with(fields).convert(toByteArray()).toArray(new byte[fields.length][]);
+		List<byte[]> result = this.hmget(toByteArray().convert(key), arrayOfFields);
+		return with(result).convert(toStringValue());
+	}
+
+	@Override
+	public String hmset(byte[] key, Map<byte[], byte[]> hash) {
+		updateTtl(key);
+		checkValidTypeOrNone(key, HashDatatypeOperations.HASH);
+		return this.hashDatatypeOperations.hmset(key, hash);
+	}
+
+	@Override
+	public String hmset(String key, Map<String, String> hash) {
+		return this.hmset(toByteArray().convert(key), toMapByteArray().convert(hash));
+	}
+
+	@Override
+	public ScanResult<Entry<String, String>> hscan(String key, int cursor)
+	{
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public ScanResult<Entry<String, String>> hscan(String key, String cursor)
+	{
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public Long hset(byte[] key, byte[] field, byte[] value) {
+		updateTtl(key);
+		checkValidTypeOrNone(key, HashDatatypeOperations.HASH);
+		return this.hashDatatypeOperations.hset(key, field, value);
+	}
+
+	@Override
+	public Long hset(String key, String field, String value) {
+		return this.hset(toByteArray().convert(key), toByteArray().convert(field), toByteArray().convert(value));
+	}
+
+	@Override
+	public Long hsetnx(byte[] key, byte[] field, byte[] value) {
+		updateTtl(key);
+		checkValidTypeOrNone(key, HashDatatypeOperations.HASH);
+		return this.hashDatatypeOperations.hsetnx(key, field, value);
+	}
+
+	@Override
+	public Long hsetnx(String key, String field, String value) {
+		return this.hsetnx(toByteArray().convert(key), toByteArray().convert(field), toByteArray().convert(value));
+	}
+
+	@Override
+	public Collection<byte[]> hvals(byte[] key) {
+		updateTtl(key);
+		checkValidTypeOrNone(key, HashDatatypeOperations.HASH);
+		return this.hashDatatypeOperations.hvals(key);
+	}
+
+	@Override
+	public List<String> hvals(String key) {
+		Collection<byte[]> result = this.hvals(toByteArray().convert(key));
+		return new LinkedList<String>(with(result).convert(toStringValue()));
+	}
+
+	@Override
+	public Long incr(byte[] key) {
+		updateTtl(key);
+		checkValidTypeOrNone(key, StringDatatypeOperations.STRING);
+		return this.stringDatatypeOperations.incr(key);
+	}
+
+	@Override
+	public Long incr(String key) {
+		return this.incr(toByteArray().convert(key));
+	}
+
+	@Override
+	public Long incrBy(byte[] key, long integer) {
+		updateTtl(key);
+		checkValidTypeOrNone(key, StringDatatypeOperations.STRING);
+		return this.stringDatatypeOperations.incrBy(key, integer);
+	}
+
+	@Override
+	public Long incrBy(String key, long integer) {
+		return this.incrBy(toByteArray().convert(key), integer);
+	}
+
+	public String info() {
+		return this.keysServerOperations.info();
+	}
+
+	public boolean isConnected() {
+		return this.keysServerOperations.isConnected();
+	}
+
+	public Set<byte[]> keys(final byte[] pattern) {
+		updateAllTtlTimes();
+		return this.keysServerOperations.keys(pattern);
+	}
+
+	public Set<String> keys(final String pattern) {
+		Set<byte[]> result = this.keys(toByteArray().convert(pattern));
+		return new LinkedHashSet<String>(with(result).convert(toStringValue()));
+	}
+
+	public Long lastsave() {
+		return this.keysServerOperations.lastsave();
 	}
 
 	@Override
@@ -295,17 +568,34 @@ public class EmbeddedJedis implements JedisCommands, BinaryJedisCommands {
 	}
 
 	@Override
-	public String lset(byte[] key, long index, byte[] value) {
-		updateTtl(key);
-		checkValidTypeOrNone(key, ListDatatypeOperations.LIST);
-		return this.listDatatypeOperations.lset(key, (int)index, value);
+	public String lindex(String key, long index) {
+		byte[] result = this.lindex(toByteArray().convert(key), (int) index);
+		return toStringValue().convert(result);
 	}
 
 	@Override
-	public Long lrem(byte[] key, long count, byte[] value) {
+	public Long linsert(byte[] key, LIST_POSITION where, byte[] pivot, byte[] value) {
 		updateTtl(key);
 		checkValidTypeOrNone(key, ListDatatypeOperations.LIST);
-		return this.listDatatypeOperations.lrem(key, count, value);
+		return this.listDatatypeOperations.linsert(key, toListPosition().convert(where), pivot, value);
+	}
+
+	@Override
+	public Long linsert(String key, LIST_POSITION where, String pivot, String value) {
+		return this.linsert(toByteArray().convert(key), where, toByteArray().convert(pivot),
+				toByteArray().convert(value));
+	}
+
+	@Override
+	public Long llen(byte[] key) {
+		updateTtl(key);
+		checkValidTypeOrNone(key, ListDatatypeOperations.LIST);
+		return this.listDatatypeOperations.llen(key);
+	}
+
+	@Override
+	public Long llen(String key) {
+		return this.llen(toByteArray().convert(key));
 	}
 
 	@Override
@@ -316,11 +606,300 @@ public class EmbeddedJedis implements JedisCommands, BinaryJedisCommands {
 	}
 
 	@Override
+	public String lpop(String key) {
+		byte[] result = this.lpop(toByteArray().convert(key));
+		return toStringValue().convert(result);
+	}
+
+	@Override
+	public Long lpush(byte[] key, byte[]... values) {
+		updateTtl(key);
+		checkValidTypeOrNone(key, ListDatatypeOperations.LIST);
+		return this.listDatatypeOperations.lpush(key, values);
+	}
+
+	@Override
+	public Long lpush(String key, String... fields) {
+		byte[][] arrayOfFields = with(fields).convert(toByteArray()).toArray(new byte[fields.length][]);
+		return this.lpush(toByteArray().convert(key), arrayOfFields);
+	}
+
+	public Long lpushx(byte[] key, byte[] value) {
+		updateTtl(key);
+		checkValidTypeOrNone(key, ListDatatypeOperations.LIST);
+		return this.listDatatypeOperations.lpushx(key, value);
+	}
+
+	@Override
+    public Long lpushx(byte[] key, byte[]... values) {
+        long lastSize = this.listDatatypeOperations.llen(key);
+
+        for (byte[] bs : values) {
+            lastSize = this.lpushx(key, bs);
+        }
+
+        return lastSize;
+    }
+
+	public Long lpushx(String key, String string) {
+		return this.lpushx(toByteArray().convert(key), toByteArray().convert(string));
+	}
+
+	@Override
+    public Long lpushx(String key, String... values) {
+        long lastSize = this.listDatatypeOperations.llen(key.getBytes());
+
+        for (String value : values) {
+            lastSize = this.lpushx(key, value);
+        }
+
+        return lastSize;
+    }
+
+	@Override
+	public List<byte[]> lrange(byte[] key, long start, long end) {
+		updateTtl(key);
+		checkValidTypeOrNone(key, ListDatatypeOperations.LIST);
+		return this.listDatatypeOperations.lrange(key, start, end);
+	}
+
+	@Override
+	public List<String> lrange(String key, long start, long end) {
+		List<byte[]> result = this.lrange(toByteArray().convert(key), (int) start, (int) end);
+		return with(result).convert(toStringValue());
+	}
+
+	@Override
+	public Long lrem(byte[] key, long count, byte[] value) {
+		updateTtl(key);
+		checkValidTypeOrNone(key, ListDatatypeOperations.LIST);
+		return this.listDatatypeOperations.lrem(key, count, value);
+	}
+
+	@Override
+	public Long lrem(String key, long count, String value) {
+		return this.lrem(toByteArray().convert(key), (int) count, toByteArray().convert(value));
+	}
+
+	@Override
+	public String lset(byte[] key, long index, byte[] value) {
+		updateTtl(key);
+		checkValidTypeOrNone(key, ListDatatypeOperations.LIST);
+		return this.listDatatypeOperations.lset(key, (int)index, value);
+	}
+
+	@Override
+	public String lset(String key, long index, String value) {
+		return this.lset(toByteArray().convert(key), (int) index, toByteArray().convert(value));
+	}
+
+	@Override
+	public String ltrim(byte[] key, long start, long end) {
+		updateTtl(key);
+		checkValidTypeOrNone(key, ListDatatypeOperations.LIST);
+		return this.listDatatypeOperations.ltrim(key, start, end);
+	}
+
+	@Override
+	public String ltrim(String key, long start, long end) {
+		return this.ltrim(toByteArray().convert(key), (int) start, (int) end);
+	}
+
+	public void monitor(final JedisMonitor jedisMonitor) {
+		this.keysServerOperations.monitor(jedisMonitor);
+	}
+
+	public Long move(final byte[] key, final int dbIndex) {
+		return 0L;
+	}
+
+	@Override
+    public Long move(String key, int dbIndex) {
+        return this.move(key.getBytes(), dbIndex);
+    }
+
+	public Transaction multi() {
+		return this.transactionServerOperations.multi();
+	}
+
+	public List<Object> multi(final TransactionBlock jedisTransaction) {
+		return this.transactionServerOperations.multi(jedisTransaction);
+	}
+
+	public byte[] objectEncoding(byte[] key) {
+		return this.keysServerOperations.objectEncoding(key);
+	}
+
+	public byte[] objectEncoding(String key) {
+		return this.objectEncoding(toByteArray().convert(key));
+	}
+
+	public Long objectIdletime(byte[] key) {
+		return this.keysServerOperations.objectIdletime(key);
+	}
+
+	public Long objectIdletime(String key) {
+		return this.objectIdletime(toByteArray().convert(key));
+	}
+
+	public Long objectRefcount(byte[] key) {
+		return this.keysServerOperations.objectRefcount(key);
+	}
+
+	public Long objectRefcount(String key) {
+		return this.objectRefcount(toByteArray().convert(key));
+	}
+
+	public Long persist(final byte[] key) {
+		updateTtl(key);
+		return this.keysServerOperations.persist(key);
+	}
+
+	public Long persist(final String key) {
+		return this.persist(toByteArray().convert(key));
+	}
+
+	public String ping() {
+		return this.connectionServerOperations.ping();
+	}
+
+	public Pipeline pipelined() {
+		return this.transactionServerOperations.pipelined();
+	}
+
+	public List<Object> pipelined(final PipelineBlock jedisPipeline) {
+		return this.transactionServerOperations.pipelined(jedisPipeline);
+	}
+
+	public void psubscribe(BinaryJedisPubSub jedisPubSub, byte[]... patterns) {
+		this.pubSubServerOperations.psubscribe(jedisPubSub, patterns);
+	}
+
+	public void psubscribe(BinaryJedisPubSub jedisPubSub, String... patterns) {
+		byte[][] arrayOfPatterns = with(patterns).convert(toByteArray()).toArray(new byte[patterns.length][]);
+		this.psubscribe(jedisPubSub, arrayOfPatterns);
+	}
+
+	public void psubscribe(final JedisPubSub jedisPubSub, final byte[]... patterns) {
+		this.pubSubServerOperations.psubscribe(jedisPubSub, patterns);
+	}
+
+	public void psubscribe(final JedisPubSub jedisPubSub, final String... patterns) {
+		byte[][] arrayOfPatterns = with(patterns).convert(toByteArray()).toArray(new byte[patterns.length][]);
+		this.psubscribe(jedisPubSub, arrayOfPatterns);
+	}
+
+	public Long publish(byte[] channel, byte[] message) {
+		return this.pubSubServerOperations.publish(channel, message);
+	}
+
+	public Long publish(String channel, String message) {
+		return this.publish(toByteArray().convert(channel), toByteArray().convert(message));
+	}
+
+	public String quit() {
+		return this.connectionServerOperations.quit();
+	}
+
+	public String rename(final byte[] oldkey, final byte[] newkey) {
+		updateTtl(oldkey);
+		updateTtl(newkey);
+		return this.keysServerOperations.rename(oldkey, newkey);
+	}
+
+	public String rename(final String oldkey, final String newkey) {
+		return this.rename(toByteArray().convert(oldkey), toByteArray().convert(newkey));
+	}
+
+	/**
+	 * Rename oldkey into newkey but fails if the destination key newkey already
+	 * exists.
+	 * <p>
+	 * Time complexity: O(1)
+	 *
+	 * @param oldkey
+	 * @param newkey
+	 * @return Integer reply, specifically: 1 if the key was renamed 0 if the
+	 *         target key already exist
+	 */
+	public Long renamenx(final byte[] oldkey, final byte[] newkey) {
+		updateTtl(oldkey);
+		updateTtl(newkey);
+		return this.keysServerOperations.renamenx(oldkey, newkey);
+	}
+
+	/**
+	 * Rename oldkey into newkey but fails if the destination key newkey already
+	 * exists.
+	 * <p>
+	 * Time complexity: O(1)
+	 *
+	 * @param oldkey
+	 * @param newkey
+	 * @return Integer reply, specifically: 1 if the key was renamed 0 if the
+	 *         target key already exist
+	 */
+	public Long renamenx(final String oldkey, final String newkey) {
+		return this.renamenx(toByteArray().convert(oldkey), toByteArray().convert(newkey));
+	}
+
+	@Override
 	public byte[] rpop(byte[] key) {
 		updateTtl(key);
 		checkValidTypeOrNone(key, ListDatatypeOperations.LIST);
 		return this.listDatatypeOperations.rpop(key);
 	}
+
+	@Override
+	public String rpop(String key) {
+		byte[] result = this.rpop(toByteArray().convert(key));
+		return toStringValue().convert(result);
+	}
+
+	@Override
+	public Long rpush(byte[] key, byte[]... values) {
+		updateTtl(key);
+		checkValidTypeOrNone(key, ListDatatypeOperations.LIST);
+		return this.listDatatypeOperations.rpush(key, values);
+	}
+
+	@Override
+	public Long rpush(String key, String... fields) {
+		byte[][] arrayOfFields = with(fields).convert(toByteArray()).toArray(new byte[fields.length][]);
+		return this.rpush(toByteArray().convert(key), arrayOfFields);
+	}
+
+	public Long rpushx(byte[] key, byte[] value) {
+		updateTtl(key);
+		checkValidTypeOrNone(key, ListDatatypeOperations.LIST);
+		return this.listDatatypeOperations.rpushx(key, value);
+	}
+
+	@Override
+    public Long rpushx(byte[] key, byte[]... values) {
+        long lastSize = this.listDatatypeOperations.llen(key);
+
+        for (byte[] bs : values) {
+            lastSize = this.rpushx(key, bs);
+        }
+
+        return lastSize;
+    }
+
+	public Long rpushx(String key, String string) {
+		return this.rpushx(toByteArray().convert(key), toByteArray().convert(string));
+	}
+
+	@Override
+    public Long rpushx(String key, String... values) {
+        long lastSize = this.listDatatypeOperations.llen(key.getBytes());
+
+        for (String value : values) {
+            lastSize = this.rpushx(key, value);
+        }
+
+        return lastSize;
+    }
 
 	@Override
 	public Long sadd(byte[] key, byte[]... member) {
@@ -330,24 +909,13 @@ public class EmbeddedJedis implements JedisCommands, BinaryJedisCommands {
 	}
 
 	@Override
-	public Set<byte[]> smembers(byte[] key) {
-		updateTtl(key);
-		checkValidTypeOrNone(key, SetDatatypeOperations.SET);
-		return this.setDatatypeOperations.smembers(key);
+	public Long sadd(String key, String... members) {
+		byte[][] arrayOfFields = with(members).convert(toByteArray()).toArray(new byte[members.length][]);
+		return this.sadd(toByteArray().convert(key), arrayOfFields);
 	}
 
-	@Override
-	public Long srem(byte[] key, byte[]... member) {
-		updateTtl(key);
-		checkValidTypeOrNone(key, SetDatatypeOperations.SET);
-		return this.setDatatypeOperations.srem(key, member);
-	}
-
-	@Override
-	public byte[] spop(byte[] key) {
-		updateTtl(key);
-		checkValidTypeOrNone(key, SetDatatypeOperations.SET);
-		return this.setDatatypeOperations.spop(key);
+	public String save() {
+		return this.keysServerOperations.save();
 	}
 
 	@Override
@@ -358,6 +926,119 @@ public class EmbeddedJedis implements JedisCommands, BinaryJedisCommands {
 	}
 
 	@Override
+	public Long scard(String key) {
+		return this.scard(toByteArray().convert(key));
+	}
+
+	public List<Long> scriptExists(byte[]... sha1) {
+		return this.scriptingServerOperations.scriptExists(sha1);
+	}
+
+	public Boolean scriptExists(String sha1) {
+		String[] a = new String[1];
+		a[0] = sha1;
+		return scriptExists(a).get(0);
+	}
+
+	public List<Boolean> scriptExists(String... sha1) {
+		throw new UnsupportedOperationException("script Exists is not supported");
+	}
+
+	public byte[] scriptFlush() {
+		return this.scriptingServerOperations.scriptFlush();
+	}
+
+	public byte[] scriptKill() {
+		return this.scriptingServerOperations.scriptKill();
+	}
+
+	public byte[] scriptLoad(byte[] script) {
+		return this.scriptingServerOperations.scriptLoad(script);
+	}
+
+	public String scriptLoad(String script) {
+		byte[] result = this.scriptLoad(toByteArray().convert(script));
+		return toStringValue().convert(result);
+	}
+
+	public String select(final int index) {
+		return this.connectionServerOperations.select(index);
+	}
+
+	@Override
+	public String set(byte[] key, byte[] value) {
+		keysServerOperations.del(key);
+		stringDatatypeOperations.removeExpiration(key);
+		return stringDatatypeOperations.set(key, value);
+	}
+
+	@Override
+	public String set(String key, String value) {
+		return this.set(toByteArray().convert(key), toByteArray().convert(value));
+	}
+
+	@Override
+    public Boolean setbit(byte[] key, long offset, boolean value) {
+        return this.setbit(new String(key), offset, value);
+    }
+
+	public Boolean setbit(byte[] key, long offset, byte[] value) {
+		updateTtl(key);
+		checkValidTypeOrNone(key, StringDatatypeOperations.STRING);
+		return this.stringDatatypeOperations.setbit(key, offset, value);
+	}
+
+	@Override
+	public Boolean setbit(String key, long offset, boolean value) {
+		return this.setbit(toByteArray().convert(key), offset, toBooleanByteArray().convert(value));
+	}
+
+
+	@Override
+    public Boolean setbit(String key, long offset, String value) {
+        return this.setbit(key.getBytes(), offset, value.getBytes());
+    }
+
+	@Override
+	public String setex(byte[] key, int seconds, byte[] value) {
+		updateTtl(key);
+		checkValidTypeOrNone(key, StringDatatypeOperations.STRING);
+		return this.stringDatatypeOperations.setex(key, seconds, value);
+	}
+
+	@Override
+	public String setex(String key, int seconds, String value) {
+		return this.setex(toByteArray().convert(key), seconds, toByteArray().convert(value));
+	}
+
+	@Override
+	public Long setnx(byte[] key, byte[] value) {
+		updateTtl(key);
+		checkValidTypeOrNone(key, StringDatatypeOperations.STRING);
+		return this.stringDatatypeOperations.setnx(key, value);
+	}
+
+	@Override
+	public Long setnx(String key, String value) {
+		return this.setnx(toByteArray().convert(key), toByteArray().convert(value));
+	}
+
+	public Long setrange(byte[] key, long offset, byte[] value) {
+		updateTtl(key);
+		checkValidTypeOrNone(key, StringDatatypeOperations.STRING);
+		return this.stringDatatypeOperations.setrange(key, offset, value);
+	}
+
+	@Override
+	public Long setrange(String key, long offset, String value) {
+		return this.setrange(toByteArray().convert(key), offset, toByteArray().convert(value));
+	}
+
+	public String shutdown() {
+		return this.keysServerOperations.shutdown();
+	}
+
+	@Override
 	public Boolean sismember(byte[] key, byte[] member) {
 		updateTtl(key);
 		checkValidTypeOrNone(key, SetDatatypeOperations.SET);
@@ -365,96 +1046,53 @@ public class EmbeddedJedis implements JedisCommands, BinaryJedisCommands {
 	}
 
 	@Override
-	public byte[] srandmember(byte[] key) {
+	public Boolean sismember(String key, String member) {
+		return this.sismember(toByteArray().convert(key), toByteArray().convert(member));
+	}
+
+	public String slaveof(final String host, final int port) {
+		return this.keysServerOperations.slaveof(host, port);
+	}
+
+	public String slaveofNoOne() {
+		return this.keysServerOperations.slaveofNoOne();
+	}
+
+	public List<Slowlog> slowlogGet() {
+		return this.keysServerOperations.slowlogGet();
+	}
+
+	public List<Slowlog> slowlogGet(long entries) {
+		return this.keysServerOperations.slowlogGet(entries);
+	}
+
+	public List<byte[]> slowlogGetBinary() {
+		return this.keysServerOperations.slowlogGetBinary();
+	}
+
+	public List<byte[]> slowlogGetBinary(long entries) {
+		return this.keysServerOperations.slowlogGetBinary(entries);
+	}
+
+	public long slowlogLen() {
+		return this.keysServerOperations.slowlogLen();
+	}
+
+	public byte[] slowlogReset() {
+		return this.keysServerOperations.slowlogReset();
+	}
+
+	@Override
+	public Set<byte[]> smembers(byte[] key) {
 		updateTtl(key);
 		checkValidTypeOrNone(key, SetDatatypeOperations.SET);
-		return this.setDatatypeOperations.srandmember(key);
+		return this.setDatatypeOperations.smembers(key);
 	}
 
 	@Override
-	public Long zadd(byte[] key, double score, byte[] member) {
-		updateTtl(key);
-		checkValidTypeOrNone(key, SortsetDatatypeOperations.ZSET);
-		return this.sortsetDatatypeOperations.zadd(key, score, member);
-	}
-
-	@Override
-	public Long zadd(byte[] key, Map<Double, byte[]> scoreMembers) {
-		updateTtl(key);
-		checkValidTypeOrNone(key, SortsetDatatypeOperations.ZSET);
-		return this.sortsetDatatypeOperations.zadd(key, scoreMembers);
-	}
-
-	@Override
-	public Set<byte[]> zrange(byte[] key, long start, long end) {
-		updateTtl(key);
-		checkValidTypeOrNone(key, SortsetDatatypeOperations.ZSET);
-		return this.sortsetDatatypeOperations.zrange(key, start, end);
-	}
-
-	@Override
-	public Long zrem(byte[] key, byte[]... members) {
-		updateTtl(key);
-		checkValidTypeOrNone(key, SortsetDatatypeOperations.ZSET);
-		return this.sortsetDatatypeOperations.zrem(key, members);
-	}
-
-	@Override
-	public Double zincrby(byte[] key, double score, byte[] member) {
-		updateTtl(key);
-		checkValidTypeOrNone(key, SortsetDatatypeOperations.ZSET);
-		return this.sortsetDatatypeOperations.zincrby(key, score, member);
-	}
-
-	@Override
-	public Long zrank(byte[] key, byte[] member) {
-		updateTtl(key);
-		checkValidTypeOrNone(key, SortsetDatatypeOperations.ZSET);
-		return this.sortsetDatatypeOperations.zrank(key, member);
-	}
-
-	@Override
-	public Long zrevrank(byte[] key, byte[] member) {
-		updateTtl(key);
-		checkValidTypeOrNone(key, SortsetDatatypeOperations.ZSET);
-		return this.sortsetDatatypeOperations.zrevrank(key, member);
-	}
-
-	@Override
-	public Set<byte[]> zrevrange(byte[] key, long start, long end) {
-		updateTtl(key);
-		checkValidTypeOrNone(key, SortsetDatatypeOperations.ZSET);
-		return this.sortsetDatatypeOperations.zrevrange(key, start, end);
-	}
-
-	@Override
-	public Set<Tuple> zrangeWithScores(byte[] key, long start, long end) {
-		updateTtl(key);
-		checkValidTypeOrNone(key, SortsetDatatypeOperations.ZSET);
-		Set<ScoredByteBuffer> rangeWithScore = this.sortsetDatatypeOperations.zrangeWithScores(key, start, end);
-		return new LinkedHashSet<Tuple>(with(rangeWithScore).convert(toTuple()));
-	}
-
-	@Override
-	public Set<Tuple> zrevrangeWithScores(byte[] key, long start, long end) {
-		updateTtl(key);
-		checkValidTypeOrNone(key, SortsetDatatypeOperations.ZSET);
-		Set<ScoredByteBuffer> rangeWithScore = this.sortsetDatatypeOperations.zrevrangeWithScores(key, start, end);
-		return new LinkedHashSet<Tuple>(with(rangeWithScore).convert(toTuple()));
-	}
-
-	@Override
-	public Long zcard(byte[] key) {
-		updateTtl(key);
-		checkValidTypeOrNone(key, SortsetDatatypeOperations.ZSET);
-		return this.sortsetDatatypeOperations.zcard(key);
-	}
-
-	@Override
-	public Double zscore(byte[] key, byte[] member) {
-		updateTtl(key);
-		checkValidTypeOrNone(key, SortsetDatatypeOperations.ZSET);
-		return this.sortsetDatatypeOperations.zscore(key, member);
+	public Set<String> smembers(String key) {
+		Set<byte[]> result = this.smembers(toByteArray().convert(key));
+		return new LinkedHashSet<String>(with(result).convert(toStringValue()));
 	}
 
 	@Override
@@ -469,10 +1107,180 @@ public class EmbeddedJedis implements JedisCommands, BinaryJedisCommands {
 	}
 
 	@Override
-	public Long zcount(byte[] key, double min, double max) {
+	public List<String> sort(String key) {
+		List<byte[]> result = this.sort(toByteArray().convert(key));
+		return with(result).convert(toStringValue());
+	}
+
+	@Override
+	public List<String> sort(String key, SortingParams sortingParameters) {
+		List<byte[]> result = this.sort(toByteArray().convert(key), sortingParameters);
+		return with(result).convert(toStringValue());
+	}
+
+	@Override
+	public byte[] spop(byte[] key) {
+		updateTtl(key);
+		checkValidTypeOrNone(key, SetDatatypeOperations.SET);
+		return this.setDatatypeOperations.spop(key);
+	}
+
+	@Override
+	public String spop(String key) {
+		byte[] result = this.spop(toByteArray().convert(key));
+		return toStringValue().convert(result);
+	}
+
+	@Override
+	public byte[] srandmember(byte[] key) {
+		updateTtl(key);
+		checkValidTypeOrNone(key, SetDatatypeOperations.SET);
+		return this.setDatatypeOperations.srandmember(key);
+	}
+
+	@Override
+	public String srandmember(String key) {
+		byte[] result = this.srandmember(toByteArray().convert(key));
+		return toStringValue().convert(result);
+	}
+
+	@Override
+	public Long srem(byte[] key, byte[]... member) {
+		updateTtl(key);
+		checkValidTypeOrNone(key, SetDatatypeOperations.SET);
+		return this.setDatatypeOperations.srem(key, member);
+	}
+
+	@Override
+	public Long srem(String key, String... members) {
+		byte[][] arrayOfFields = with(members).convert(toByteArray()).toArray(new byte[members.length][]);
+		return this.srem(toByteArray().convert(key), arrayOfFields);
+	}
+
+	@Override
+	public ScanResult<String> sscan(String key, int cursor)
+	{
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+	public ScanResult<String> sscan(String key, String cursor)
+	{
+		// TODO Auto-generated method stub
+		return null;
+	}
+
+	@Override
+    public Long strlen(byte[] key) {
+        return this.stringDatatypeOperations.strlen(key);
+    }
+
+	@Override
+    public Long strlen(String key) {
+        return this.strlen(key.getBytes());
+    }
+
+	public void subscribe(JedisPubSub jedisPubSub, byte[]... channels) {
+		this.pubSubServerOperations.subscribe(jedisPubSub, channels);
+	}
+
+	public void subscribe(JedisPubSub jedisPubSub, String... channels) {
+		byte[][] arrayOfChanenls = with(channels).convert(toByteArray()).toArray(new byte[channels.length][]);
+		this.subscribe(jedisPubSub, arrayOfChanenls);
+	}
+
+	@Override
+	public byte[] substr(byte[] key, int start, int end) {
+		updateTtl(key);
+		checkValidTypeOrNone(key, StringDatatypeOperations.STRING);
+		return this.stringDatatypeOperations.substr(key, start, end);
+	}
+
+	@Override
+	public String substr(String key, int start, int end) {
+		byte[] result = this.substr(toByteArray().convert(key), start, end);
+		return toStringValue().convert(result);
+	}
+
+	public void sync() {
+		this.keysServerOperations.sync();
+	}
+
+	public Long time() {
+		return this.keysServerOperations.time();
+	}
+
+	@Override
+	public Long ttl(byte[] key) {
+		return this.keysServerOperations.ttl(key);
+	}
+
+	@Override
+	public Long ttl(String key) {
+		return this.ttl(toByteArray().convert(key));
+	}
+
+	@Override
+	public String type(byte[] key) {
+		updateTtl(key);
+		return this.keysServerOperations.type(key);
+	}
+
+	@Override
+	public String type(String key) {
+		return this.type(toByteArray().convert(key));
+	}
+
+	public String unwatch() {
+		return this.transactionServerOperations.unwatch();
+	}
+
+	public String watch(final byte[]... keys) {
+		return this.transactionServerOperations.watch(keys);
+	}
+
+	public String watch(final String... keys) {
+		return this.watch(with(keys).convert(toByteArray()).toArray(new byte[keys.length][]));
+	}
+
+	@Override
+	public Long zadd(byte[] key, double score, byte[] member) {
 		updateTtl(key);
 		checkValidTypeOrNone(key, SortsetDatatypeOperations.ZSET);
-		return this.sortsetDatatypeOperations.zcount(key, min, max);
+		return this.sortsetDatatypeOperations.zadd(key, score, member);
+	}
+
+	public Long zadd(byte[] key, Map<byte[], Double> scoreMembers) {
+		updateTtl(key);
+		checkValidTypeOrNone(key, SortsetDatatypeOperations.ZSET);
+		return this.sortsetDatatypeOperations.zadd(key, scoreMembers);
+	}
+
+	@Override
+	public Long zadd(String key, double score, String member) {
+		return this.zadd(toByteArray().convert(key), score, toByteArray().convert(member));
+	}
+
+	public Long zadd(String key, Map<String, Double> scoreMembers) {
+		Map<byte[], Double> tmpMap = new HashMap<byte[], Double>();
+		for (Map.Entry<String, Double> entry : scoreMembers.entrySet())
+		{
+			tmpMap.put(toByteArray().convert(entry.getKey()), entry.getValue());
+		}
+		return this.zadd(toByteArray().convert(key), tmpMap);
+	}
+
+	@Override
+	public Long zcard(byte[] key) {
+		updateTtl(key);
+		checkValidTypeOrNone(key, SortsetDatatypeOperations.ZSET);
+		return this.sortsetDatatypeOperations.zcard(key);
+	}
+
+	@Override
+	public Long zcard(String key) {
+		return this.zcard(toByteArray().convert(key));
 	}
 
 	@Override
@@ -480,6 +1288,60 @@ public class EmbeddedJedis implements JedisCommands, BinaryJedisCommands {
 		updateTtl(key);
 		checkValidTypeOrNone(key, SortsetDatatypeOperations.ZSET);
 		return this.sortsetDatatypeOperations.zcount(key, min, max);
+	}
+
+	@Override
+	public Long zcount(byte[] key, double min, double max) {
+		updateTtl(key);
+		checkValidTypeOrNone(key, SortsetDatatypeOperations.ZSET);
+		return this.sortsetDatatypeOperations.zcount(key, min, max);
+	}
+
+	@Override
+	public Long zcount(String key, double min, double max) {
+		return this.zcount(toByteArray().convert(key), min, max);
+	}
+
+	@Override
+	public Long zcount(String key, String min, String max) {
+		return this.zcount(toByteArray().convert(key), toByteArray().convert(min), toByteArray().convert(max));
+	}
+
+	@Override
+	public Double zincrby(byte[] key, double score, byte[] member) {
+		updateTtl(key);
+		checkValidTypeOrNone(key, SortsetDatatypeOperations.ZSET);
+		return this.sortsetDatatypeOperations.zincrby(key, score, member);
+	}
+
+	@Override
+	public Double zincrby(String key, double score, String member) {
+		return this.zincrby(toByteArray().convert(key), score, toByteArray().convert(member));
+	}
+
+	@Override
+	public Set<byte[]> zrange(byte[] key, long start, long end) {
+		updateTtl(key);
+		checkValidTypeOrNone(key, SortsetDatatypeOperations.ZSET);
+		return this.sortsetDatatypeOperations.zrange(key, start, end);
+	}
+
+	@Override
+	public Set<String> zrange(String key, long start, long end) {
+		Set<byte[]> result = this.zrange(toByteArray().convert(key), (int) start, (int) end);
+		return new LinkedHashSet<String>(with(result).convert(toStringValue()));
+	}
+
+	public Set<byte[]> zrangeByScore(byte[] key, byte[] min, byte[] max) {
+		updateTtl(key);
+		checkValidTypeOrNone(key, SortsetDatatypeOperations.ZSET);
+		return this.sortsetDatatypeOperations.zrangeByScore(key, min, max);
+	}
+
+	public Set<byte[]> zrangeByScore(byte[] key, byte[] min, byte[] max, int offset, int count) {
+		updateTtl(key);
+		checkValidTypeOrNone(key, SortsetDatatypeOperations.ZSET);
+		return this.sortsetDatatypeOperations.zrangeByScore(key, min, max, offset, count);
 	}
 
 	@Override
@@ -497,21 +1359,29 @@ public class EmbeddedJedis implements JedisCommands, BinaryJedisCommands {
 	}
 
 	@Override
-	public Set<Tuple> zrangeByScoreWithScores(byte[] key, double min, double max) {
-		updateTtl(key);
-		checkValidTypeOrNone(key, SortsetDatatypeOperations.ZSET);
-		Set<ScoredByteBuffer> zrangeByScoreWithScores = this.sortsetDatatypeOperations.zrangeByScoreWithScores(key,
-				min, max);
-		return new LinkedHashSet<Tuple>(with(zrangeByScoreWithScores).convert(toTuple()));
+	public Set<String> zrangeByScore(String key, double min, double max) {
+		Set<byte[]> result = this.zrangeByScore(toByteArray().convert(key), min, max);
+		return new LinkedHashSet<String>(with(result).convert(toStringValue()));
 	}
 
 	@Override
-	public Set<Tuple> zrangeByScoreWithScores(byte[] key, double min, double max, int offset, int count) {
-		updateTtl(key);
-		checkValidTypeOrNone(key, SortsetDatatypeOperations.ZSET);
-		Set<ScoredByteBuffer> zrangeByScoreWithScores = this.sortsetDatatypeOperations.zrangeByScoreWithScores(key,
-				min, max, offset, count);
-		return new LinkedHashSet<Tuple>(with(zrangeByScoreWithScores).convert(toTuple()));
+	public Set<String> zrangeByScore(String key, double min, double max, int offset, int count) {
+		Set<byte[]> result = this.zrangeByScore(toByteArray().convert(key), min, max, offset, count);
+		return new LinkedHashSet<String>(with(result).convert(toStringValue()));
+	}
+
+	@Override
+	public Set<String> zrangeByScore(String key, String min, String max) {
+		Set<byte[]> result = this.zrangeByScore(toByteArray().convert(key), toByteArray().convert(min), toByteArray()
+				.convert(max));
+		return new LinkedHashSet<String>(with(result).convert(toStringValue()));
+	}
+
+	@Override
+	public Set<String> zrangeByScore(String key, String min, String max, int offset, int count) {
+		Set<byte[]> result = this.zrangeByScore(toByteArray().convert(key), toByteArray().convert(min), toByteArray()
+				.convert(max), offset, count);
+		return new LinkedHashSet<String>(with(result).convert(toStringValue()));
 	}
 
 	@Override
@@ -533,17 +1403,131 @@ public class EmbeddedJedis implements JedisCommands, BinaryJedisCommands {
 	}
 
 	@Override
-	public Set<byte[]> zrevrangeByScore(byte[] key, double max, double min) {
+	public Set<Tuple> zrangeByScoreWithScores(byte[] key, double min, double max) {
 		updateTtl(key);
 		checkValidTypeOrNone(key, SortsetDatatypeOperations.ZSET);
-		return this.sortsetDatatypeOperations.zrevrangeByScore(key, max, min);
+		Set<ScoredByteBuffer> zrangeByScoreWithScores = this.sortsetDatatypeOperations.zrangeByScoreWithScores(key,
+				min, max);
+		return new LinkedHashSet<Tuple>(with(zrangeByScoreWithScores).convert(toTuple()));
 	}
 
 	@Override
-	public Set<byte[]> zrevrangeByScore(byte[] key, double max, double min, int offset, int count) {
+	public Set<Tuple> zrangeByScoreWithScores(byte[] key, double min, double max, int offset, int count) {
 		updateTtl(key);
 		checkValidTypeOrNone(key, SortsetDatatypeOperations.ZSET);
-		return this.sortsetDatatypeOperations.zrevrangeByScore(key, max, min, offset, count);
+		Set<ScoredByteBuffer> zrangeByScoreWithScores = this.sortsetDatatypeOperations.zrangeByScoreWithScores(key,
+				min, max, offset, count);
+		return new LinkedHashSet<Tuple>(with(zrangeByScoreWithScores).convert(toTuple()));
+	}
+
+	@Override
+	public Set<Tuple> zrangeByScoreWithScores(String key, double min, double max) {
+		return this.zrangeByScoreWithScores(toByteArray().convert(key), min, max);
+	}
+
+	@Override
+	public Set<Tuple> zrangeByScoreWithScores(String key, double min, double max, int offset, int count) {
+		return this.zrangeByScoreWithScores(toByteArray().convert(key), min, max, offset, count);
+	}
+
+	@Override
+	public Set<Tuple> zrangeByScoreWithScores(String key, String min, String max) {
+		return this.zrangeByScoreWithScores(toByteArray().convert(key), toByteArray().convert(min), toByteArray()
+				.convert(max));
+	}
+
+	@Override
+	public Set<Tuple> zrangeByScoreWithScores(String key, String min, String max, int offset, int count) {
+		return this.zrangeByScoreWithScores(toByteArray().convert(key), toByteArray().convert(min), toByteArray()
+				.convert(max), offset, count);
+	}
+
+	@Override
+	public Set<Tuple> zrangeWithScores(byte[] key, long start, long end) {
+		updateTtl(key);
+		checkValidTypeOrNone(key, SortsetDatatypeOperations.ZSET);
+		Set<ScoredByteBuffer> rangeWithScore = this.sortsetDatatypeOperations.zrangeWithScores(key, start, end);
+		return new LinkedHashSet<Tuple>(with(rangeWithScore).convert(toTuple()));
+	}
+
+	@Override
+	public Set<Tuple> zrangeWithScores(String key, long start, long end) {
+		return this.zrangeWithScores(toByteArray().convert(key), (int) start, (int) end);
+	}
+
+	@Override
+	public Long zrank(byte[] key, byte[] member) {
+		updateTtl(key);
+		checkValidTypeOrNone(key, SortsetDatatypeOperations.ZSET);
+		return this.sortsetDatatypeOperations.zrank(key, member);
+	}
+
+	@Override
+	public Long zrank(String key, String member) {
+		return this.zrank(toByteArray().convert(key), toByteArray().convert(member));
+	}
+
+	@Override
+	public Long zrem(byte[] key, byte[]... members) {
+		updateTtl(key);
+		checkValidTypeOrNone(key, SortsetDatatypeOperations.ZSET);
+		return this.sortsetDatatypeOperations.zrem(key, members);
+	}
+
+	@Override
+	public Long zrem(String key, String... members) {
+		byte[][] arrayOfFields = with(members).convert(toByteArray()).toArray(new byte[members.length][]);
+		return this.zrem(toByteArray().convert(key), arrayOfFields);
+	}
+
+	@Override
+	public Long zremrangeByRank(byte[] key, long start, long end) {
+		updateTtl(key);
+		checkValidTypeOrNone(key, SortsetDatatypeOperations.ZSET);
+		return this.sortsetDatatypeOperations.zremrangeByRank(key, start, end);
+	}
+
+	@Override
+	public Long zremrangeByRank(String key, long start, long end) {
+		return this.zremrangeByRank(toByteArray().convert(key), (int) start, (int) end);
+	}
+
+	@Override
+	public Long zremrangeByScore(byte[] key, byte[] start, byte[] end) {
+		updateTtl(key);
+		checkValidTypeOrNone(key, SortsetDatatypeOperations.ZSET);
+		return this.sortsetDatatypeOperations.zremrangeByScore(key, start, end);
+	}
+
+	@Override
+	public Long zremrangeByScore(byte[] key, double start, double end) {
+		updateTtl(key);
+		checkValidTypeOrNone(key, SortsetDatatypeOperations.ZSET);
+		return this.sortsetDatatypeOperations.zremrangeByScore(key, start, end);
+	}
+
+	@Override
+	public Long zremrangeByScore(String key, double start, double end) {
+		return this.zremrangeByScore(toByteArray().convert(key), start, end);
+	}
+
+	@Override
+	public Long zremrangeByScore(String key, String start, String end) {
+		return this.zremrangeByScore(toByteArray().convert(key), toByteArray().convert(start),
+				toByteArray().convert(end));
+	}
+
+	@Override
+	public Set<byte[]> zrevrange(byte[] key, long start, long end) {
+		updateTtl(key);
+		checkValidTypeOrNone(key, SortsetDatatypeOperations.ZSET);
+		return this.sortsetDatatypeOperations.zrevrange(key, start, end);
+	}
+
+	@Override
+	public Set<String> zrevrange(String key, long start, long end) {
+		Set<byte[]> result = this.zrevrange(toByteArray().convert(key), (int) start, (int) end);
+		return new LinkedHashSet<String>(with(result).convert(toStringValue()));
 	}
 
 	@Override
@@ -561,21 +1545,43 @@ public class EmbeddedJedis implements JedisCommands, BinaryJedisCommands {
 	}
 
 	@Override
-	public Set<Tuple> zrevrangeByScoreWithScores(byte[] key, double max, double min) {
+	public Set<byte[]> zrevrangeByScore(byte[] key, double max, double min) {
 		updateTtl(key);
 		checkValidTypeOrNone(key, SortsetDatatypeOperations.ZSET);
-		Set<ScoredByteBuffer> zrangeByScoreWithScores = this.sortsetDatatypeOperations.zrevrangeByScoreWithScores(key,
-				max, min);
-		return new LinkedHashSet<Tuple>(with(zrangeByScoreWithScores).convert(toTuple()));
+		return this.sortsetDatatypeOperations.zrevrangeByScore(key, max, min);
 	}
 
 	@Override
-	public Set<Tuple> zrevrangeByScoreWithScores(byte[] key, double max, double min, int offset, int count) {
+	public Set<byte[]> zrevrangeByScore(byte[] key, double max, double min, int offset, int count) {
 		updateTtl(key);
 		checkValidTypeOrNone(key, SortsetDatatypeOperations.ZSET);
-		Set<ScoredByteBuffer> zrangeByScoreWithScores = this.sortsetDatatypeOperations.zrevrangeByScoreWithScores(key,
-				max, min, offset, count);
-		return new LinkedHashSet<Tuple>(with(zrangeByScoreWithScores).convert(toTuple()));
+		return this.sortsetDatatypeOperations.zrevrangeByScore(key, max, min, offset, count);
+	}
+
+	@Override
+	public Set<String> zrevrangeByScore(String key, double max, double min) {
+		Set<byte[]> result = this.zrevrangeByScore(toByteArray().convert(key), max, min);
+		return new LinkedHashSet<String>(with(result).convert(toStringValue()));
+	}
+
+	@Override
+	public Set<String> zrevrangeByScore(String key, double max, double min, int offset, int count) {
+		Set<byte[]> result = this.zrevrangeByScore(toByteArray().convert(key), max, min, offset, count);
+		return new LinkedHashSet<String>(with(result).convert(toStringValue()));
+	}
+
+	@Override
+	public Set<String> zrevrangeByScore(String key, String max, String min) {
+		Set<byte[]> result = this.zrevrangeByScore(toByteArray().convert(key), toByteArray().convert(max),
+				toByteArray().convert(min));
+		return new LinkedHashSet<String>(with(result).convert(toStringValue()));
+	}
+
+	@Override
+	public Set<String> zrevrangeByScore(String key, String max, String min, int offset, int count) {
+		Set<byte[]> result = this.zrevrangeByScore(toByteArray().convert(key), toByteArray().convert(max),
+				toByteArray().convert(min), offset, count);
+		return new LinkedHashSet<String>(with(result).convert(toStringValue()));
 	}
 
 	@Override
@@ -596,779 +1602,106 @@ public class EmbeddedJedis implements JedisCommands, BinaryJedisCommands {
 		return new LinkedHashSet<Tuple>(with(zrangeByScoreWithScores).convert(toTuple()));
 	}
 
-	public Set<byte[]> zrangeByScore(byte[] key, byte[] min, byte[] max) {
+    @Override
+	public Set<Tuple> zrevrangeByScoreWithScores(byte[] key, double max, double min) {
 		updateTtl(key);
 		checkValidTypeOrNone(key, SortsetDatatypeOperations.ZSET);
-		return this.sortsetDatatypeOperations.zrangeByScore(key, min, max);
+		Set<ScoredByteBuffer> zrangeByScoreWithScores = this.sortsetDatatypeOperations.zrevrangeByScoreWithScores(key,
+				max, min);
+		return new LinkedHashSet<Tuple>(with(zrangeByScoreWithScores).convert(toTuple()));
 	}
 
-	public Set<byte[]> zrangeByScore(byte[] key, byte[] min, byte[] max, int offset, int count) {
+    @Override
+	public Set<Tuple> zrevrangeByScoreWithScores(byte[] key, double max, double min, int offset, int count) {
 		updateTtl(key);
 		checkValidTypeOrNone(key, SortsetDatatypeOperations.ZSET);
-		return this.sortsetDatatypeOperations.zrangeByScore(key, min, max, offset, count);
+		Set<ScoredByteBuffer> zrangeByScoreWithScores = this.sortsetDatatypeOperations.zrevrangeByScoreWithScores(key,
+				max, min, offset, count);
+		return new LinkedHashSet<Tuple>(with(zrangeByScoreWithScores).convert(toTuple()));
 	}
 
-	@Override
-	public Long zremrangeByRank(byte[] key, long start, long end) {
-		updateTtl(key);
-		checkValidTypeOrNone(key, SortsetDatatypeOperations.ZSET);
-		return this.sortsetDatatypeOperations.zremrangeByRank(key, start, end);
-	}
-
-	@Override
-	public Long zremrangeByScore(byte[] key, double start, double end) {
-		updateTtl(key);
-		checkValidTypeOrNone(key, SortsetDatatypeOperations.ZSET);
-		return this.sortsetDatatypeOperations.zremrangeByScore(key, start, end);
-	}
-
-	@Override
-	public Long zremrangeByScore(byte[] key, byte[] start, byte[] end) {
-		updateTtl(key);
-		checkValidTypeOrNone(key, SortsetDatatypeOperations.ZSET);
-		return this.sortsetDatatypeOperations.zremrangeByScore(key, start, end);
-	}
-
-	@Override
-	public Long linsert(byte[] key, LIST_POSITION where, byte[] pivot, byte[] value) {
-		updateTtl(key);
-		checkValidTypeOrNone(key, ListDatatypeOperations.LIST);
-		return this.listDatatypeOperations.linsert(key, toListPosition().convert(where), pivot, value);
-	}
-
-	public Long objectRefcount(byte[] key) {
-		return this.keysServerOperations.objectRefcount(key);
-	}
-
-	public Long objectIdletime(byte[] key) {
-		return this.keysServerOperations.objectIdletime(key);
-	}
-
-	public byte[] objectEncoding(byte[] key) {
-		return this.keysServerOperations.objectEncoding(key);
-	}
-
-	public Long objectRefcount(String key) {
-		return this.objectRefcount(toByteArray().convert(key));
-	}
-
-	public Long objectIdletime(String key) {
-		return this.objectIdletime(toByteArray().convert(key));
-	}
-
-	public byte[] objectEncoding(String key) {
-		return this.objectEncoding(toByteArray().convert(key));
-	}
-
-	public void psubscribe(final JedisPubSub jedisPubSub, final byte[]... patterns) {
-		this.pubSubServerOperations.psubscribe(jedisPubSub, patterns);
-	}
-
-	public void psubscribe(final JedisPubSub jedisPubSub, final String... patterns) {
-		byte[][] arrayOfPatterns = with(patterns).convert(toByteArray()).toArray(new byte[patterns.length][]);
-		this.psubscribe(jedisPubSub, arrayOfPatterns);
-	}
-
-	public void psubscribe(BinaryJedisPubSub jedisPubSub, byte[]... patterns) {
-		this.pubSubServerOperations.psubscribe(jedisPubSub, patterns);
-	}
-
-	public void subscribe(JedisPubSub jedisPubSub, String... channels) {
-		byte[][] arrayOfChanenls = with(channels).convert(toByteArray()).toArray(new byte[channels.length][]);
-		this.subscribe(jedisPubSub, arrayOfChanenls);
-	}
-
-	public void subscribe(JedisPubSub jedisPubSub, byte[]... channels) {
-		this.pubSubServerOperations.subscribe(jedisPubSub, channels);
-	}
-
-	public void psubscribe(BinaryJedisPubSub jedisPubSub, String... patterns) {
-		byte[][] arrayOfPatterns = with(patterns).convert(toByteArray()).toArray(new byte[patterns.length][]);
-		this.psubscribe(jedisPubSub, arrayOfPatterns);
-	}
-
-	public Long publish(byte[] channel, byte[] message) {
-		return this.pubSubServerOperations.publish(channel, message);
-	}
-
-	public Long publish(String channel, String message) {
-		return this.publish(toByteArray().convert(channel), toByteArray().convert(message));
-	}
-
-	public Long lpushx(byte[] key, byte[] value) {
-		updateTtl(key);
-		checkValidTypeOrNone(key, ListDatatypeOperations.LIST);
-		return this.listDatatypeOperations.lpushx(key, value);
-	}
-
-	public Long rpushx(byte[] key, byte[] value) {
-		updateTtl(key);
-		checkValidTypeOrNone(key, ListDatatypeOperations.LIST);
-		return this.listDatatypeOperations.rpushx(key, value);
-	}
-
-	public Boolean setbit(byte[] key, long offset, byte[] value) {
-		updateTtl(key);
-		checkValidTypeOrNone(key, StringDatatypeOperations.STRING);
-		return this.stringDatatypeOperations.setbit(key, offset, value);
-	}
-
-	public Boolean getbit(byte[] key, long offset) {
-		updateTtl(key);
-		checkValidTypeOrNone(key, StringDatatypeOperations.STRING);
-		return this.stringDatatypeOperations.getbit(key, offset);
-	}
-
-	public Long setrange(byte[] key, long offset, byte[] value) {
-		updateTtl(key);
-		checkValidTypeOrNone(key, StringDatatypeOperations.STRING);
-		return this.stringDatatypeOperations.setrange(key, offset, value);
-	}
-
-	public byte[] getrange(byte[] key, long startOffset, long endOffset) {
-		updateTtl(key);
-		checkValidTypeOrNone(key, StringDatatypeOperations.STRING);
-		return this.stringDatatypeOperations.getrange(key, startOffset, endOffset);
-	}
-
-	public Long dbSize() {
-		updateAllTtlTimes();
-		return this.keysServerOperations.dbSize();
-	}
-
-	public String flushDB() {
-		return this.keysServerOperations.flushDB();
-	}
-
-	public String flushAll() {
-		return this.flushDB();
-	}
-
-	public Long del(final byte[]... keys) {
-		return this.keysServerOperations.del(keys);
-	}
-
-	public Long del(final String... keys) {
-		byte[][] arrayOfFields = with(keys).convert(toByteArray()).toArray(new byte[keys.length][]);
-		return this.del(arrayOfFields);
-	}
-
-	public String rename(final String oldkey, final String newkey) {
-		return this.rename(toByteArray().convert(oldkey), toByteArray().convert(newkey));
-	}
-
-	public String rename(final byte[] oldkey, final byte[] newkey) {
-		updateTtl(oldkey);
-		updateTtl(newkey);
-		return this.keysServerOperations.rename(oldkey, newkey);
-	}
-
-	/**
-	 * Rename oldkey into newkey but fails if the destination key newkey already
-	 * exists.
-	 * <p>
-	 * Time complexity: O(1)
-	 * 
-	 * @param oldkey
-	 * @param newkey
-	 * @return Integer reply, specifically: 1 if the key was renamed 0 if the
-	 *         target key already exist
-	 */
-	public Long renamenx(final byte[] oldkey, final byte[] newkey) {
-		updateTtl(oldkey);
-		updateTtl(newkey);
-		return this.keysServerOperations.renamenx(oldkey, newkey);
-	}
-
-	public Set<byte[]> keys(final byte[] pattern) {
-		updateAllTtlTimes();
-		return this.keysServerOperations.keys(pattern);
-	}
-
-	public Set<String> keys(final String pattern) {
-		Set<byte[]> result = this.keys(toByteArray().convert(pattern));
-		return new LinkedHashSet<String>(with(result).convert(toStringValue()));
-	}
-
-	public Long persist(final String key) {
-		return this.persist(toByteArray().convert(key));
-	}
-
-	public Long persist(final byte[] key) {
-		updateTtl(key);
-		return this.keysServerOperations.persist(key);
-	}
-
-	/**
-	 * Rename oldkey into newkey but fails if the destination key newkey already
-	 * exists.
-	 * <p>
-	 * Time complexity: O(1)
-	 * 
-	 * @param oldkey
-	 * @param newkey
-	 * @return Integer reply, specifically: 1 if the key was renamed 0 if the
-	 *         target key already exist
-	 */
-	public Long renamenx(final String oldkey, final String newkey) {
-		return this.renamenx(toByteArray().convert(oldkey), toByteArray().convert(newkey));
-	}
-
-	public Long move(final byte[] key, final int dbIndex) {
-		return 0L;
-	}
-
-	@Override
-	public String set(String key, String value) {
-		return this.set(toByteArray().convert(key), toByteArray().convert(value));
-	}
-
-	@Override
-	public String get(String key) {
-		byte[] result = this.get(toByteArray().convert(key));
-		return toStringValue().convert(result);
-	}
-
-	@Override
-	public Boolean exists(String key) {
-		return this.exists(toByteArray().convert(key));
-	}
-
-	@Override
-	public String type(String key) {
-		return this.type(toByteArray().convert(key));
-	}
-
-	@Override
-	public Long expire(String key, int seconds) {
-		return this.expire(toByteArray().convert(key), seconds);
-	}
-
-	@Override
-	public Long expireAt(String key, long unixTime) {
-		return expireAt(toByteArray().convert(key), unixTime);
-	}
-
-	@Override
-	public Long ttl(String key) {
-		return this.ttl(toByteArray().convert(key));
-	}
-
-	@Override
-	public Boolean setbit(String key, long offset, boolean value) {
-		return this.setbit(toByteArray().convert(key), offset, toBooleanByteArray().convert(value));
-	}
-
-	@Override
-	public Boolean getbit(String key, long offset) {
-		return this.getbit(toByteArray().convert(key), offset);
-	}
-
-	@Override
-	public Long setrange(String key, long offset, String value) {
-		return this.setrange(toByteArray().convert(key), offset, toByteArray().convert(value));
-	}
-
-	@Override
-	public String getrange(String key, long startOffset, long endOffset) {
-		byte[] result = this.getrange(toByteArray().convert(key), startOffset, endOffset);
-		return toStringValue().convert(result);
-	}
-
-	@Override
-	public String getSet(String key, String value) {
-		byte[] result = this.getSet(toByteArray().convert(key), toByteArray().convert(value));
-		return toStringValue().convert(result);
-	}
-
-	@Override
-	public Long setnx(String key, String value) {
-		return this.setnx(toByteArray().convert(key), toByteArray().convert(value));
-	}
-
-	@Override
-	public String setex(String key, int seconds, String value) {
-		return this.setex(toByteArray().convert(key), seconds, toByteArray().convert(value));
-	}
-
-	@Override
-	public Long decrBy(String key, long integer) {
-		return this.decrBy(toByteArray().convert(key), integer);
-	}
-
-	@Override
-	public Long decr(String key) {
-		return this.decr(toByteArray().convert(key));
-	}
-
-	@Override
-	public Long incrBy(String key, long integer) {
-		return this.incrBy(toByteArray().convert(key), integer);
-	}
-
-	@Override
-	public Long incr(String key) {
-		return this.incr(toByteArray().convert(key));
-	}
-
-	@Override
-	public Long append(String key, String value) {
-		return this.append(toByteArray().convert(key), toByteArray().convert(value));
-	}
-
-	@Override
-	public String substr(String key, int start, int end) {
-		byte[] result = this.substr(toByteArray().convert(key), start, end);
-		return toStringValue().convert(result);
-	}
-
-	@Override
-	public Long hset(String key, String field, String value) {
-		return this.hset(toByteArray().convert(key), toByteArray().convert(field), toByteArray().convert(value));
-	}
-
-	@Override
-	public String hget(String key, String field) {
-		byte[] result = this.hget(toByteArray().convert(key), toByteArray().convert(field));
-		return toStringValue().convert(result);
-	}
-
-	@Override
-	public Long hsetnx(String key, String field, String value) {
-		return this.hsetnx(toByteArray().convert(key), toByteArray().convert(field), toByteArray().convert(value));
-	}
-
-	@Override
-	public String hmset(String key, Map<String, String> hash) {
-		return this.hmset(toByteArray().convert(key), toMapByteArray().convert(hash));
-	}
-
-	@Override
-	public List<String> hmget(String key, String... fields) {
-		byte[][] arrayOfFields = with(fields).convert(toByteArray()).toArray(new byte[fields.length][]);
-		List<byte[]> result = this.hmget(toByteArray().convert(key), arrayOfFields);
-		return with(result).convert(toStringValue());
-	}
-
-	@Override
-	public Long hincrBy(String key, String field, long value) {
-		return this.hincrBy(toByteArray().convert(key), toByteArray().convert(field), value);
-	}
-
-	@Override
-	public Boolean hexists(String key, String field) {
-		return hexists(toByteArray().convert(key), toByteArray().convert(field));
-	}
-
-	@Override
-	public Long hdel(String key, String... fields) {
-		byte[][] arrayOfFields = with(fields).convert(toByteArray()).toArray(new byte[fields.length][]);
-		return this.hdel(toByteArray().convert(key), arrayOfFields);
-	}
-
-	@Override
-	public Long hlen(String key) {
-		return this.hlen(toByteArray().convert(key));
-	}
-
-	@Override
-	public Set<String> hkeys(String key) {
-		Set<byte[]> result = this.hkeys(toByteArray().convert(key));
-		return new LinkedHashSet<String>(with(result).convert(toStringValue()));
-	}
-
-	@Override
-	public List<String> hvals(String key) {
-		Collection<byte[]> result = this.hvals(toByteArray().convert(key));
-		return new LinkedList<String>(with(result).convert(toStringValue()));
-	}
-
-	@Override
-	public Map<String, String> hgetAll(String key) {
-		Map<byte[], byte[]> result = this.hgetAll(toByteArray().convert(key));
-		return toMapString().convert(result);
-	}
-
-	@Override
-	public Long rpush(String key, String... fields) {
-		byte[][] arrayOfFields = with(fields).convert(toByteArray()).toArray(new byte[fields.length][]);
-		return this.rpush(toByteArray().convert(key), arrayOfFields);
-	}
-
-	@Override
-	public Long lpush(String key, String... fields) {
-		byte[][] arrayOfFields = with(fields).convert(toByteArray()).toArray(new byte[fields.length][]);
-		return this.lpush(toByteArray().convert(key), arrayOfFields);
-	}
-
-	@Override
-	public Long llen(String key) {
-		return this.llen(toByteArray().convert(key));
-	}
-
-	@Override
-	public List<String> lrange(String key, long start, long end) {
-		List<byte[]> result = this.lrange(toByteArray().convert(key), (int) start, (int) end);
-		return with(result).convert(toStringValue());
-	}
-
-	@Override
-	public String ltrim(String key, long start, long end) {
-		return this.ltrim(toByteArray().convert(key), (int) start, (int) end);
-	}
-
-	@Override
-	public String lindex(String key, long index) {
-		byte[] result = this.lindex(toByteArray().convert(key), (int) index);
-		return toStringValue().convert(result);
-	}
-
-	@Override
-	public String lset(String key, long index, String value) {
-		return this.lset(toByteArray().convert(key), (int) index, toByteArray().convert(value));
-	}
-
-	@Override
-	public Long lrem(String key, long count, String value) {
-		return this.lrem(toByteArray().convert(key), (int) count, toByteArray().convert(value));
-	}
-
-	@Override
-	public String lpop(String key) {
-		byte[] result = this.lpop(toByteArray().convert(key));
-		return toStringValue().convert(result);
-	}
-
-	@Override
-	public String rpop(String key) {
-		byte[] result = this.rpop(toByteArray().convert(key));
-		return toStringValue().convert(result);
-	}
-
-	@Override
-	public Long sadd(String key, String... members) {
-		byte[][] arrayOfFields = with(members).convert(toByteArray()).toArray(new byte[members.length][]);
-		return this.sadd(toByteArray().convert(key), arrayOfFields);
-	}
-
-	@Override
-	public Set<String> smembers(String key) {
-		Set<byte[]> result = this.smembers(toByteArray().convert(key));
-		return new LinkedHashSet<String>(with(result).convert(toStringValue()));
-	}
-
-	@Override
-	public Long srem(String key, String... members) {
-		byte[][] arrayOfFields = with(members).convert(toByteArray()).toArray(new byte[members.length][]);
-		return this.srem(toByteArray().convert(key), arrayOfFields);
-	}
-
-	@Override
-	public String spop(String key) {
-		byte[] result = this.spop(toByteArray().convert(key));
-		return toStringValue().convert(result);
-	}
-
-	@Override
-	public Long scard(String key) {
-		return this.scard(toByteArray().convert(key));
-	}
-
-	@Override
-	public Boolean sismember(String key, String member) {
-		return this.sismember(toByteArray().convert(key), toByteArray().convert(member));
-	}
-
-	@Override
-	public String srandmember(String key) {
-		byte[] result = this.srandmember(toByteArray().convert(key));
-		return toStringValue().convert(result);
-	}
-
-	@Override
-	public Long zadd(String key, double score, String member) {
-		return this.zadd(toByteArray().convert(key), score, toByteArray().convert(member));
-	}
-
-	@Override
-	public Long zadd(String key, Map<Double, String> scoreMembers) {
-		return this.zadd(toByteArray().convert(key), with(scoreMembers).convertValues(toByteArray()));
-	}
-
-	@Override
-	public Set<String> zrange(String key, long start, long end) {
-		Set<byte[]> result = this.zrange(toByteArray().convert(key), (int) start, (int) end);
-		return new LinkedHashSet<String>(with(result).convert(toStringValue()));
-	}
-
-	@Override
-	public Long zrem(String key, String... members) {
-		byte[][] arrayOfFields = with(members).convert(toByteArray()).toArray(new byte[members.length][]);
-		return this.zrem(toByteArray().convert(key), arrayOfFields);
-	}
-
-	@Override
-	public Double zincrby(String key, double score, String member) {
-		return this.zincrby(toByteArray().convert(key), score, toByteArray().convert(member));
-	}
-
-	@Override
-	public Long zrank(String key, String member) {
-		return this.zrank(toByteArray().convert(key), toByteArray().convert(member));
-	}
-
-	@Override
-	public Long zrevrank(String key, String member) {
-		return this.zrevrank(toByteArray().convert(key), toByteArray().convert(member));
-	}
-
-	@Override
-	public Set<String> zrevrange(String key, long start, long end) {
-		Set<byte[]> result = this.zrevrange(toByteArray().convert(key), (int) start, (int) end);
-		return new LinkedHashSet<String>((with(result).convert(toStringValue())));
-	}
-
-	@Override
-	public Set<Tuple> zrangeWithScores(String key, long start, long end) {
-		return this.zrangeWithScores(toByteArray().convert(key), (int) start, (int) end);
-	}
-
-	@Override
-	public Set<Tuple> zrevrangeWithScores(String key, long start, long end) {
-		return this.zrevrangeWithScores(toByteArray().convert(key), (int) start, (int) end);
-	}
-
-	@Override
-	public Long zcard(String key) {
-		return this.zcard(toByteArray().convert(key));
-	}
-
-	@Override
-	public Double zscore(String key, String member) {
-		return this.zscore(toByteArray().convert(key), toByteArray().convert(member));
-	}
-
-	@Override
-	public List<String> sort(String key) {
-		List<byte[]> result = this.sort(toByteArray().convert(key));
-		return with(result).convert(toStringValue());
-	}
-
-	@Override
-	public List<String> sort(String key, SortingParams sortingParameters) {
-		List<byte[]> result = this.sort(toByteArray().convert(key), sortingParameters);
-		return with(result).convert(toStringValue());
-	}
-
-	@Override
-	public Long zcount(String key, double min, double max) {
-		return this.zcount(toByteArray().convert(key), min, max);
-	}
-
-	@Override
-	public Long zcount(String key, String min, String max) {
-		return this.zcount(toByteArray().convert(key), toByteArray().convert(min), toByteArray().convert(max));
-	}
-
-	@Override
-	public Set<String> zrangeByScore(String key, double min, double max) {
-		Set<byte[]> result = this.zrangeByScore(toByteArray().convert(key), min, max);
-		return new LinkedHashSet<String>(with(result).convert(toStringValue()));
-	}
-
-	@Override
-	public Set<String> zrangeByScore(String key, String min, String max) {
-		Set<byte[]> result = this.zrangeByScore(toByteArray().convert(key), toByteArray().convert(min), toByteArray()
-				.convert(max));
-		return new LinkedHashSet<String>(with(result).convert(toStringValue()));
-	}
-
-	@Override
-	public Set<String> zrevrangeByScore(String key, double max, double min) {
-		Set<byte[]> result = this.zrevrangeByScore(toByteArray().convert(key), max, min);
-		return new LinkedHashSet<String>(with(result).convert(toStringValue()));
-	}
-
-	@Override
-	public Set<String> zrangeByScore(String key, double min, double max, int offset, int count) {
-		Set<byte[]> result = this.zrangeByScore(toByteArray().convert(key), min, max, offset, count);
-		return new LinkedHashSet<String>(with(result).convert(toStringValue()));
-	}
-
-	@Override
-	public Set<String> zrevrangeByScore(String key, String max, String min) {
-		Set<byte[]> result = this.zrevrangeByScore(toByteArray().convert(key), toByteArray().convert(max),
-				toByteArray().convert(min));
-		return new LinkedHashSet<String>(with(result).convert(toStringValue()));
-	}
-
-	@Override
-	public Set<String> zrangeByScore(String key, String min, String max, int offset, int count) {
-		Set<byte[]> result = this.zrangeByScore(toByteArray().convert(key), toByteArray().convert(min), toByteArray()
-				.convert(max), offset, count);
-		return new LinkedHashSet<String>(with(result).convert(toStringValue()));
-	}
-
-	@Override
-	public Set<String> zrevrangeByScore(String key, double max, double min, int offset, int count) {
-		Set<byte[]> result = this.zrevrangeByScore(toByteArray().convert(key), max, min, offset, count);
-		return new LinkedHashSet<String>(with(result).convert(toStringValue()));
-	}
-
-	@Override
-	public Set<Tuple> zrangeByScoreWithScores(String key, double min, double max) {
-		return this.zrangeByScoreWithScores(toByteArray().convert(key), min, max);
-	}
-
-	@Override
+    @Override
 	public Set<Tuple> zrevrangeByScoreWithScores(String key, double max, double min) {
 		return this.zrevrangeByScoreWithScores(toByteArray().convert(key), max, min);
 	}
 
-	@Override
-	public Set<Tuple> zrangeByScoreWithScores(String key, double min, double max, int offset, int count) {
-		return this.zrangeByScoreWithScores(toByteArray().convert(key), min, max, offset, count);
+    @Override
+	public Set<Tuple> zrevrangeByScoreWithScores(String key, double max, double min, int offset, int count) {
+		return this.zrevrangeByScoreWithScores(toByteArray().convert(key), max, min, offset, count);
 	}
 
-	@Override
-	public Set<String> zrevrangeByScore(String key, String max, String min, int offset, int count) {
-		Set<byte[]> result = this.zrevrangeByScore(toByteArray().convert(key), toByteArray().convert(max),
-				toByteArray().convert(min), offset, count);
-		return new LinkedHashSet<String>(with(result).convert(toStringValue()));
-	}
-
-	@Override
-	public Set<Tuple> zrangeByScoreWithScores(String key, String min, String max) {
-		return this.zrangeByScoreWithScores(toByteArray().convert(key), toByteArray().convert(min), toByteArray()
-				.convert(max));
-	}
-
-	@Override
+    @Override
 	public Set<Tuple> zrevrangeByScoreWithScores(String key, String max, String min) {
 		return this.zrevrangeByScoreWithScores(toByteArray().convert(key), toByteArray().convert(max), toByteArray()
 				.convert(min));
 	}
 
-	@Override
-	public Set<Tuple> zrangeByScoreWithScores(String key, String min, String max, int offset, int count) {
-		return this.zrangeByScoreWithScores(toByteArray().convert(key), toByteArray().convert(min), toByteArray()
-				.convert(max), offset, count);
-	}
-
-	@Override
-	public Set<Tuple> zrevrangeByScoreWithScores(String key, double max, double min, int offset, int count) {
-		return this.zrevrangeByScoreWithScores(toByteArray().convert(key), max, min, offset, count);
-	}
-
-	@Override
+    @Override
 	public Set<Tuple> zrevrangeByScoreWithScores(String key, String max, String min, int offset, int count) {
 		return this.zrevrangeByScoreWithScores(toByteArray().convert(key), toByteArray().convert(max), toByteArray()
 				.convert(min), offset, count);
 	}
 
-	@Override
-	public Long zremrangeByRank(String key, long start, long end) {
-		return this.zremrangeByRank(toByteArray().convert(key), (int) start, (int) end);
+    @Override
+	public Set<Tuple> zrevrangeWithScores(byte[] key, long start, long end) {
+		updateTtl(key);
+		checkValidTypeOrNone(key, SortsetDatatypeOperations.ZSET);
+		Set<ScoredByteBuffer> rangeWithScore = this.sortsetDatatypeOperations.zrevrangeWithScores(key, start, end);
+		return new LinkedHashSet<Tuple>(with(rangeWithScore).convert(toTuple()));
 	}
 
-	@Override
-	public Long zremrangeByScore(String key, double start, double end) {
-		return this.zremrangeByScore(toByteArray().convert(key), start, end);
+    @Override
+	public Set<Tuple> zrevrangeWithScores(String key, long start, long end) {
+		return this.zrevrangeWithScores(toByteArray().convert(key), (int) start, (int) end);
 	}
 
-	@Override
-	public Long zremrangeByScore(String key, String start, String end) {
-		return this.zremrangeByScore(toByteArray().convert(key), toByteArray().convert(start),
-				toByteArray().convert(end));
+    @Override
+	public Long zrevrank(byte[] key, byte[] member) {
+		updateTtl(key);
+		checkValidTypeOrNone(key, SortsetDatatypeOperations.ZSET);
+		return this.sortsetDatatypeOperations.zrevrank(key, member);
 	}
 
-	@Override
-	public Long linsert(String key, LIST_POSITION where, String pivot, String value) {
-		return this.linsert(toByteArray().convert(key), where, toByteArray().convert(pivot),
-				toByteArray().convert(value));
+
+    @Override
+	public Long zrevrank(String key, String member) {
+		return this.zrevrank(toByteArray().convert(key), toByteArray().convert(member));
 	}
 
-	public Long lpushx(String key, String string) {
-		return this.lpushx(toByteArray().convert(key), toByteArray().convert(string));
+    @Override
+	public ScanResult<Tuple> zscan(String key, int cursor)
+	{
+		// TODO Auto-generated method stub
+		return null;
 	}
 
-	public Long rpushx(String key, String string) {
-		return this.rpushx(toByteArray().convert(key), toByteArray().convert(string));
+    @Override
+	public ScanResult<Tuple> zscan(String key, String cursor)
+	{
+		// TODO Auto-generated method stub
+		return null;
 	}
 
-	public String auth(final String password) {
-		return this.connectionServerOperations.auth(password);
+    @Override
+	public Double zscore(byte[] key, byte[] member) {
+		updateTtl(key);
+		checkValidTypeOrNone(key, SortsetDatatypeOperations.ZSET);
+		return this.sortsetDatatypeOperations.zscore(key, member);
 	}
 
-	public byte[] echo(final byte[] string) {
-		return this.connectionServerOperations.echo(string);
+    @Override
+	public Double zscore(String key, String member) {
+		return this.zscore(toByteArray().convert(key), toByteArray().convert(member));
 	}
 
-	public String echo(final String string) {
-		byte[] result = this.echo(toByteArray().convert(string));
-		return toStringValue().convert(result);
+    private void checkValidTypeOrNone(byte[] key, String type) {
+		String currentType = keysServerOperations.type(key);
+		if (!(KeysServerOperations.NONE.equals(currentType) || currentType.equals(type))) {
+			throw new IllegalArgumentException("ERR Operation against a key holding the wrong kind of value");
+		}
 	}
 
-	public String ping() {
-		return this.connectionServerOperations.ping();
-	}
-
-	public String quit() {
-		return this.connectionServerOperations.quit();
-	}
-
-	public String select(final int index) {
-		return this.connectionServerOperations.select(index);
-	}
-
-	/**
-	 * Evaluates scripts using the Lua interpreter built into Redis starting
-	 * from version 2.6.0.
-	 * <p>
-	 * 
-	 * @return Script result
-	 */
-	public Object eval(byte[] script, List<byte[]> keys, List<byte[]> args) {
-		return this.scriptingServerOperations.eval(script, keys, args);
-	}
-
-	public Object eval(byte[] script, byte[] keyCount, byte[][] params) {
-		return this.scriptingServerOperations.eval(script, keyCount, params);
-	}
-
-	public Object eval(String script, int keyCount, String... params) {
-		byte[][] arrayOfParams = with(params).convert(toByteArray()).toArray(new byte[params.length][]);
-		return this.eval(toByteArray().convert(script), toByteArray().convert(Integer.toString(keyCount)),
-				arrayOfParams);
-	}
-
-	public Object eval(String script, List<String> keys, List<String> args) {
-		return this.eval(toByteArray().convert(script), with(keys).convert(toByteArray()),
-				with(args).convert(toByteArray()));
-	}
-
-	public Object eval(String script) {
-		return eval(script, 0);
-	}
-
-	public Object evalsha(String script) {
-		return evalsha(script, 0);
-	}
-
-	public Object evalsha(String sha1, List<String> keys, List<String> args) {
-		return evalsha(sha1, keys.size(), getParams(keys, args));
-	}
-
-	public Object evalsha(String sha1, int keyCount, String... params) {
-		return this.evalsha(toByteArray().convert(sha1), toByteArray().convert(Integer.toString(keyCount)),
-				with(params).convert(toByteArray()).toArray(new byte[params.length][]));
-	}
-
-	public Object evalsha(byte[] sha1, byte[] keyCount, byte[]... params) {
-		return this.scriptingServerOperations.evalsha(sha1, keyCount, params);
-	}
-
-	private String[] getParams(List<String> keys, List<String> args) {
+    private String[] getParams(List<String> keys, List<String> args) {
 		int keyCount = keys.size();
 		int argCount = args.size();
 
@@ -1383,206 +1716,7 @@ public class EmbeddedJedis implements JedisCommands, BinaryJedisCommands {
 		return params;
 	}
 
-	public List<Long> scriptExists(byte[]... sha1) {
-		return this.scriptingServerOperations.scriptExists(sha1);
-	}
-
-	public Boolean scriptExists(String sha1) {
-		String[] a = new String[1];
-		a[0] = sha1;
-		return scriptExists(a).get(0);
-	}
-
-	public List<Boolean> scriptExists(String... sha1) {
-		throw new UnsupportedOperationException("script Exists is not supported");
-	}
-	
-	public byte[] scriptFlush() {
-		return this.scriptingServerOperations.scriptFlush();
-	}
-
-	public byte[] scriptKill() {
-		return this.scriptingServerOperations.scriptKill();
-	}
-
-	public byte[] scriptLoad(byte[] script) {
-		return this.scriptingServerOperations.scriptLoad(script);
-	}
-
-	public String scriptLoad(String script) {
-		byte[] result = this.scriptLoad(toByteArray().convert(script));
-		return toStringValue().convert(result);
-	}
-	
-	public String watch(final byte[]... keys) {
-		return this.transactionServerOperations.watch(keys);
-	}
-
-	public String watch(final String... keys) {
-		return this.watch(with(keys).convert(toByteArray()).toArray(new byte[keys.length][]));
-	}
-
-	public String unwatch() {
-		return this.transactionServerOperations.unwatch();
-	}
-
-	public List<Object> pipelined(final PipelineBlock jedisPipeline) {
-		return this.transactionServerOperations.pipelined(jedisPipeline);
-	}
-
-	public Pipeline pipelined() {
-		return this.transactionServerOperations.pipelined();
-	}
-
-	public String bgrewriteaof() {
-		return this.keysServerOperations.bgrewriteaof();
-	}
-
-	public String save() {
-		return this.keysServerOperations.save();
-	}
-
-	public String bgsave() {
-		return this.keysServerOperations.bgsave();
-	}
-	
-	public List<byte[]> configGet(final byte[] pattern) {
-		return this.keysServerOperations.configGet(pattern);
-	}
-
-	public List<String> configGet(final String pattern) {
-		List<byte[]> result = this.configGet(toByteArray().convert(pattern));
-		return with(result).convert(toStringValue());
-	}
-	
-	public byte[] configSet(final byte[] parameter, final byte[] value) {
-		return this.keysServerOperations.configSet(parameter, value);
-	}
-
-	public String configSet(final String parameter, final String value) {
-		byte[] result =  this.configSet(toByteArray().convert(parameter), toByteArray().convert(value));
-		return toStringValue().convert(result);
-	}
-
-	public String configResetStat() {
-		return this.keysServerOperations.configResetStat();
-	}
-	
-	public String info() {
-		return this.keysServerOperations.info();
-	}
-
-	public Long lastsave() {
-		return this.keysServerOperations.lastsave();
-	}
-
-	public void monitor(final JedisMonitor jedisMonitor) {
-		this.keysServerOperations.monitor(jedisMonitor);
-	}
-	
-	public String shutdown() {
-		return this.keysServerOperations.shutdown();
-	}
-
-	public String slaveof(final String host, final int port) {
-		return this.keysServerOperations.slaveof(host, port);
-	}
-
-	public String slaveofNoOne() {
-		return this.keysServerOperations.slaveofNoOne();
-	}
-
-	public List<Slowlog> slowlogGet() {
-		return this.keysServerOperations.slowlogGet();
-	}
-
-	public List<Slowlog> slowlogGet(long entries) {
-		return this.keysServerOperations.slowlogGet(entries);
-	}
-
-	public byte[] slowlogReset() {
-		return this.keysServerOperations.slowlogReset();
-	}
-	
-	public long slowlogLen() {
-		return this.keysServerOperations.slowlogLen();
-	}
-
-	public List<byte[]> slowlogGetBinary() {
-		return this.keysServerOperations.slowlogGetBinary();
-	}
-
-	public List<byte[]> slowlogGetBinary(long entries) {
-		return this.keysServerOperations.slowlogGetBinary(entries);
-	}
-
-	public void sync() {
-		this.keysServerOperations.sync();
-	}
-	
-	public Long time() {
-		return this.keysServerOperations.time();
-	}
-	
-	public Long getDB() {
-		return this.keysServerOperations.getDB();
-	}
-	
-	public boolean isConnected() {
-		return this.keysServerOperations.isConnected();
-	}
-	
-	public Transaction multi() {
-		return this.transactionServerOperations.multi();
-	}
-
-	public List<Object> multi(final TransactionBlock jedisTransaction) {
-		return this.transactionServerOperations.multi(jedisTransaction);
-	}
-	
-	private void checkValidTypeOrNone(byte[] key, String type) {
-		String currentType = keysServerOperations.type(key);
-		if (!(KeysServerOperations.NONE.equals(currentType) || currentType.equals(type))) {
-			throw new IllegalArgumentException("ERR Operation against a key holding the wrong kind of value");
-		}
-	}
-
-	private void updateAllTtlTimes() {
-		this.keysServerOperations.updateTtl();
-	}
-
-	private void updateTtl(byte[] key) {
-		this.keysServerOperations.updateTtl(key);
-	}
-
-	private Converter<ScoredByteBuffer, Tuple> toTuple() {
-		return new Converter<SortsetDatatypeOperations.ScoredByteBuffer, Tuple>() {
-
-			@Override
-			public Tuple convert(ScoredByteBuffer from) {
-				return new Tuple(from.getByteBuffer().array(), from.getScore());
-			}
-		};
-	}
-
-	private Converter<LIST_POSITION, ListPositionEnum> toListPosition() {
-		return new Converter<BinaryClient.LIST_POSITION, ListDatatypeOperations.ListPositionEnum>() {
-
-			@Override
-			public ListPositionEnum convert(LIST_POSITION from) {
-				switch (from) {
-				case BEFORE:
-					return ListPositionEnum.BEFORE;
-				case AFTER:
-					return ListPositionEnum.AFTER;
-				default:
-					return ListPositionEnum.BEFORE;
-				}
-			}
-		};
-	}
-
-	private Converter<Boolean, byte[]> toBooleanByteArray() {
+    private Converter<Boolean, byte[]> toBooleanByteArray() {
 		return new Converter<Boolean, byte[]>() {
 
 			@Override
@@ -1596,21 +1730,23 @@ public class EmbeddedJedis implements JedisCommands, BinaryJedisCommands {
 		};
 	}
 
-	private Converter<Map<byte[], byte[]>, Map<String, String>> toMapString() {
-		return new Converter<Map<byte[], byte[]>, Map<String, String>>() {
+    private Converter<String, byte[]> toByteArray() {
+		return STRING_TO_BYTE_ARRAY_CONVERTER;
+	}
+
+    private Converter<LIST_POSITION, ListPositionEnum> toListPosition() {
+		return new Converter<BinaryClient.LIST_POSITION, ListDatatypeOperations.ListPositionEnum>() {
 
 			@Override
-			public Map<String, String> convert(Map<byte[], byte[]> from) {
-
-				Map<String, String> map = new LinkedHashMap<String, String>(from.size());
-
-				Set<byte[]> keySet = from.keySet();
-
-				for (byte[] key : keySet) {
-					map.put(toStringValue().convert(key), toStringValue().convert(from.get(key)));
+			public ListPositionEnum convert(LIST_POSITION from) {
+				switch (from) {
+				case BEFORE:
+					return ListPositionEnum.BEFORE;
+				case AFTER:
+					return ListPositionEnum.AFTER;
+				default:
+					return ListPositionEnum.BEFORE;
 				}
-
-				return map;
 			}
 		};
 	}
@@ -1634,134 +1770,45 @@ public class EmbeddedJedis implements JedisCommands, BinaryJedisCommands {
 		};
 	}
 
+	private Converter<Map<byte[], byte[]>, Map<String, String>> toMapString() {
+		return new Converter<Map<byte[], byte[]>, Map<String, String>>() {
+
+			@Override
+			public Map<String, String> convert(Map<byte[], byte[]> from) {
+
+				Map<String, String> map = new LinkedHashMap<String, String>(from.size());
+
+				Set<byte[]> keySet = from.keySet();
+
+				for (byte[] key : keySet) {
+					map.put(toStringValue().convert(key), toStringValue().convert(from.get(key)));
+				}
+
+				return map;
+			}
+		};
+	}
+
 	private Converter<byte[], String> toStringValue() {
 		return BYTE_ARRAY_TO_STRING_CONVERTER;
 	}
 
-	private Converter<String, byte[]> toByteArray() {
-		return STRING_TO_BYTE_ARRAY_CONVERTER;
+	private Converter<ScoredByteBuffer, Tuple> toTuple() {
+		return new Converter<SortsetDatatypeOperations.ScoredByteBuffer, Tuple>() {
+
+			@Override
+			public Tuple convert(ScoredByteBuffer from) {
+				return new Tuple(from.getByteBuffer().array(), from.getScore());
+			}
+		};
 	}
 
-    @Override
-    public Long bitcount(byte[] key) {
-        return this.stringDatatypeOperations.bitcount(key);
-    }
+	private void updateAllTtlTimes() {
+		this.keysServerOperations.updateTtl();
+	}
 
-    @Override
-    public Long bitcount(byte[] key, long start, long end) {
-        return this.stringDatatypeOperations.bitcount(key, start, start);
-    }
-
-    @Override
-    public List<byte[]> blpop(byte[] key) {
-        return this.listDatatypeOperations.blpop(0, key);
-    }
-
-    @Override
-    public List<byte[]> brpop(byte[] key) {
-        return this.listDatatypeOperations.brpop(0, key);
-    }
-
-    @Override
-    public Long del(byte[] key) {
-        return this.keysServerOperations.del(key);
-    }
-
-    @Override
-    public Long lpushx(byte[] key, byte[]... values) {
-        long lastSize = this.listDatatypeOperations.llen(key);
-        
-        for (byte[] bs : values) {
-            lastSize = this.lpushx(key, bs);
-        }
-        
-        return lastSize;
-    }
-
-    @Override
-    public Long rpushx(byte[] key, byte[]... values) {
-        long lastSize = this.listDatatypeOperations.llen(key);
-        
-        for (byte[] bs : values) {
-            lastSize = this.rpushx(key, bs);
-        }
-        
-        return lastSize;
-    }
-
-    @Override
-    public Boolean setbit(byte[] key, long offset, boolean value) {
-        return this.setbit(new String(key), offset, value);
-    }
-
-    @Override
-    public Long strlen(byte[] key) {
-        return this.stringDatatypeOperations.strlen(key);
-    }
-
-
-    @Override
-    public Long bitcount(String key) {
-       return this.bitcount(key.getBytes());
-    }
-
-    @Override
-    public Long bitcount(String key, long start, long end) {
-        return this.bitcount(key.getBytes(), start, end);
-    }
-
-    @Override
-    public List<String> blpop(String key) {
-        List<byte[]> result = this.blpop(key.getBytes());
-        return new LinkedList<String>(with(result).convert(toStringValue()));
-    }
-
-    @Override
-    public List<String> brpop(String key) {
-        List<byte[]> result = this.brpop(key.getBytes());
-        return new LinkedList<String>(with(result).convert(toStringValue()));
-    }
-
-    @Override
-    public Long del(String key) {
-        return this.del(key.getBytes());
-    }
-
-    @Override
-    public Long lpushx(String key, String... values) {
-        long lastSize = this.listDatatypeOperations.llen(key.getBytes());
-        
-        for (String value : values) {
-            lastSize = this.lpushx(key, value);
-        }
-        
-        return lastSize;
-    }
-
-    @Override
-    public Long rpushx(String key, String... values) {
-        long lastSize = this.listDatatypeOperations.llen(key.getBytes());
-        
-        for (String value : values) {
-            lastSize = this.rpushx(key, value);
-        }
-        
-        return lastSize;
-    }
-
-    @Override
-    public Boolean setbit(String key, long offset, String value) {
-        return this.setbit(key.getBytes(), offset, value.getBytes());
-    }
-
-    @Override
-    public Long strlen(String key) {
-        return this.strlen(key.getBytes());
-    }
-
-    @Override
-    public Long move(String key, int dbIndex) {
-        return this.move(key.getBytes(), dbIndex);
-    }
+	private void updateTtl(byte[] key) {
+		this.keysServerOperations.updateTtl(key);
+	}
 
 }
